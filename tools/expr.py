@@ -15,6 +15,7 @@ def _expr(
     calculus (integrate, diff, limit), and solvers (solve).
     """
     try:
+        print(f"simplify {expression}")
         return str(sympify(expression))
     except Exception as e:
         return f"Error evaluating expression: {str(e)}"
