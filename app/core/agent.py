@@ -72,7 +72,7 @@ if __name__ == '__main__':
     test_toml = """
     [model]
     provider = "openai-completions"
-    endpoint = "http://192.168.2.75:1234/v1"
+    endpoint = "http://127.0.0.1:11535/v1"
     name = "lfm2.5-1.2b"
     apikey = "sk-lm-waZJK7KG:Ng26SBWHSiPgW5r0thye"
     [behavior]
@@ -134,7 +134,7 @@ if __name__ == '__main__':
 
 
         print("[Question] What your name?")
-        result = await agent.run("solve x for x**3 = y", deps=deps)
+        result = await agent.run("diff tan(x)", deps=deps)
         print("[Answer]", result.output)
         print("[Answer]", result)
 
