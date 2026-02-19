@@ -16,9 +16,6 @@ This project recommends the following structure:
 
 ```
 Folio/
-├── .venv/              # [Created by uv] Python virtual environment
-├── pyproject.toml      # [Root] Project dependencies and configuration
-├── uv.lock             # [Root] Dependency lock file
 ├── agents/             # [User Extension Area] Agent Definitions (TOML config, prompts, etc.)
 │   └── default/
 │       ├── contract.toml
@@ -34,8 +31,9 @@ Folio/
 │   ├── models/         # Database Models
 │   └── ui/             # Web UI for Management
 ├── sessions/           # Execution Logs / Session Data Storage
+├── pyproject.toml      # [Root] Project dependencies and configuration
+├── .venv/              # [Created by uv] Python virtual environment
 ├── .env                # Environment Variables
-├── docker-compose.yml  # (Optional) Container Orchestration
 └── README.md
 ```
 
