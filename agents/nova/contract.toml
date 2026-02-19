@@ -1,11 +1,11 @@
 [model]
-name = "lfm2.5-1.2b"
+name = "apple-on-device"
 provider = "openai-responses"
-endpoint = "http://127.0.0.1:1234/v1"
+endpoint = "http://127.0.0.1:11535/v1"
 apikey = "local"
 
 [behavior]
-avatar = "test.png"
+avatar = "avatar.svg"
 container = "none"
 workspace = ["./workspace:rw"]
 concurreny = 4
