@@ -14,8 +14,8 @@ async def lifespan(app: FastAPI):
     # cleanup
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(auths_router, prefix="/api")
-app.include_router(agents_router, prefix="/api")
+app.include_router(auths_router)
+app.include_router(agents_router)
 
 # Mount frontend if built
 if os.path.exists("app/ui/dist"):
