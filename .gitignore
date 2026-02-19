@@ -10,4 +10,4 @@ uv.lock
 # Virtual environments
 .venv
 ui/package-lock.json
-node_modules/
+ui/node_modules/
