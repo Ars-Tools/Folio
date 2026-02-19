@@ -1,0 +1,14 @@
+[model]
+name = "lfm2.5-1.2b"
+provider = "openai-responses"
+endpoint = "http://127.0.0.1:1234/v1"
+apikey = "local"
+
+[behavior]
+avatar = "avatar.svg"
+container = "none"
+workspace = ["./workspace:rw"]
+concurreny = 4
+timeline = true
+
+[identity]
