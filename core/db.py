@@ -4,12 +4,21 @@
 Database initialization and session management using SQLModel + SQLite.
 """
 from sqlmodel import SQLModel, Session as DBSession, create_engine
+from sqlalchemy import event
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "app.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    """Enable FK constraint enforcement for every SQLite connection."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON")
+    cursor.close()
 
 
 def init_db():

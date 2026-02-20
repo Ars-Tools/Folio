@@ -43,6 +43,12 @@ _agents: dict[str, PydanticAgent] = {}
 _agent_errors: dict[str, str] = {}  # agent_id -> error message
 
 
+def evict_agent(agent_id: str):
+    """Remove an agent from the in-memory cache."""
+    _agents.pop(agent_id, None)
+    _agent_errors.pop(agent_id, None)
+
+
 def load_agents():
     """Load all agents from DB and build pydantic-ai instances. Call at startup."""
     with DBSession(engine) as db:
@@ -141,7 +147,7 @@ async def create_agent(body: AgentCreate, db: DBSession = Depends(get_db)):
     row = AgentRow(
         id=body.id,
         provider=provider.id,
-        model="apple-on-device",
+        model="",
         name=agent_name,
         prompt=_load_prompt_template(body.id, agent_name),
     )
@@ -217,14 +223,8 @@ async def delete_agent(agent_id: str, db: DBSession = Depends(get_db)):
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found")
     # Remove from cache
-    _agents.pop(agent_id, None)
-    _agent_errors.pop(agent_id, None)
-    # Delete related equips
-    for eq in db.exec(select(Equip).where(Equip.agent == agent_id)).all():
-        db.delete(eq)
-    # Delete related chats
-    for ch in db.exec(select(Chat).where(Chat.agent == agent_id)).all():
-        db.delete(ch)
+    evict_agent(agent_id)
+    # Cascade deletes chats, approvals, crons, journals, equips via FK
     db.delete(row)
     db.commit()
     return {"status": "ok"}

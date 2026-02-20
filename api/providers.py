@@ -102,12 +102,13 @@ async def delete_provider(provider_id: str, db: DBSession = Depends(get_db)):
     row = db.get(Provider, provider_id)
     if not row:
         raise HTTPException(status_code=404, detail="Provider not found")
-    # Check if any agents reference this provider
+    # Cascade deletes all agents (and their children) referencing this provider via FK
     from models.agent import Agent as AgentRow
+    from api.agents import evict_agent
+    # Evict affected agents from cache
     agents = db.exec(select(AgentRow).where(AgentRow.provider == provider_id)).all()
-    if agents:
-        ids = ", ".join(a.id for a in agents)
-        raise HTTPException(status_code=409, detail=f"Provider in use by agents: {ids}")
+    for a in agents:
+        evict_agent(a.id)
     db.delete(row)
     db.commit()
     return {"status": "ok"}

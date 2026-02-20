@@ -1,70 +1,142 @@
-# Folio - AI Agent Task Executor
+# Folio
 
-Folio is a system that assigns AI agents to HTTP endpoints and allows them to work autonomously by sending Markdown-formatted task definitions (`TASK.md`).
+An AI agent management and orchestration platform.
+Built with a FastAPI backend and SolidJS frontend, enabling creation, configuration, and real-time interaction with multiple AI agents through a Web UI.
 
 ## Overview
 
-- **HTTP API Driven**: Each agent functions as a RESTful API endpoint.
-- **Task Oriented**: Receives instructions in a standardized format called `TASK.md`.
-- **Secure Execution Environment**: Agent code execution is performed within a Docker sandbox, minimizing impact on the host system.
-- **Web Management**: Agent management, log checking, and user management can be done via the Web UI.
-- **Extensibility**: Users can define new agents and tools simply by adding configuration files and Python code.
+- **DB-Driven Agent Management** — Agent definitions stored in SQLite. Create, edit, and delete via Web UI
+- **PydanticAI Runtime** — Build LLM agents with [pydantic-ai](https://ai.pydantic.dev/). Separates built-in tools (Web Search, Code Execution, etc.) from custom tools
+- **Multi-Provider Support** — Register OpenAI Responses API / Chat Completions API / local LLMs as Providers and switch per agent
+- **Real-Time Chat** — Streaming responses via WebSocket. Conversation history persisted in DB
+- **Capability Tag System** — Declaratively assign abilities using 3 kinds: Flag (vision, reasoning) / Builtin (web-search, code-execution) / Custom (shell)
+- **Skill Equipment** — Extend agent knowledge by equipping reusable prompt fragments (Skills) to agents (Equip)
+- **Approval Flow** — Manage tool-call approval requests before execution. Designed for extension to learned auto-approval
+- **Token Auth** — Simple Bearer token authentication with 3 kinds: User / Node / Service
 
-## Directory Structure (Ideal)
-
-This project recommends the following structure:
+## Directory Structure
 
 ```
 Folio/
-├── agents/             # [User Extension Area] Agent Definitions (TOML config, prompts, etc.)
-│   └── default/
-│       ├── contract.toml
-│       └── RULE.md
-├── skills/             # [User Extension Area] Reusable Skill Sets / Knowledge Base
-├── tools/              # [System Extension Area] Tool Implementations (Python Code)
-│   ├── system.py
-│   ├── docker.py
-│   └── web.py
-├── app/                # Application Core
-│   ├── api/            # HTTP API Endpoint Definitions
-│   ├── core/           # Core Logic (Auth, DB, Sandbox Control)
-│   ├── models/         # Database Models
-│   └── ui/             # Web UI for Management
-├── sessions/           # Execution Logs / Session Data Storage
-├── pyproject.toml      # [Root] Project dependencies and configuration
-├── .venv/              # [Created by uv] Python virtual environment
-├── .env                # Environment Variables
-└── README.md
+├── main.py              # FastAPI entrypoint (startup, router registration, SPA serving)
+├── api/                 # REST API endpoints
+│   ├── agents.py        #   Agent CRUD + WebSocket chat + avatar upload
+│   ├── approvals.py     #   Approval request management
+│   ├── auth.py          #   Login authentication
+│   ├── providers.py     #   LLM provider CRUD
+│   ├── skills.py        #   Skill CRUD
+│   └── tokens.py        #   Token CRUD
+├── core/                # Core logic
+│   ├── agent.py         #   pydantic-ai Agent builder (model, tools, prompt)
+│   ├── auth.py          #   Bearer token authentication logic
+│   ├── capabilities.py  #   Capability definitions (Flag / Builtin / Custom)
+│   ├── channel.py       #   Async communication channel
+│   └── db.py            #   SQLite engine and session management
+├── models/              # SQLModel table definitions
+│   ├── agent.py         #   Agent
+│   ├── approval.py      #   Approval
+│   ├── auth.py          #   Operator (internal auth model)
+│   ├── chat.py          #   Chat
+│   ├── cron.py          #   Cron
+│   ├── equip.py         #   Equip (Agent <-> Skill join table)
+│   ├── journal.py       #   Journal
+│   ├── provider.py      #   Provider
+│   ├── session.py       #   Session
+│   ├── skill.py         #   Skill
+│   └── token.py         #   Token
+├── templates/           # Prompt templates
+│   └── Agent.md         #   Agent system prompt template
+├── tools/               # Custom tool implementations
+│   ├── cli.py           #   CLI utilities
+│   ├── docker.py        #   Docker container operations
+│   ├── expr.py          #   Mathematical expression evaluation
+│   ├── gh.py            #   GitHub integration
+│   ├── send.py          #   Message sending
+│   └── shell.py         #   Shell command execution
+├── ui/                  # Frontend (SolidJS + TypeScript + Vite + Tailwind)
+│   └── src/
+│       ├── App.tsx          # Routing
+│       ├── MainLayout.tsx   # Sidebar layout
+│       ├── Dashboard.tsx    # Dashboard
+│       ├── Agents.tsx       # Agent list
+│       ├── AgentDetail.tsx  # Agent detail & editor
+│       ├── Approvals.tsx    # Approval management
+│       ├── Chats.tsx        # Chat interface
+│       ├── Providers.tsx    # Provider management
+│       ├── Skills.tsx       # Skill management
+│       ├── Tokens.tsx       # Token management
+│       ├── Sessions.tsx     # Session list
+│       └── Timeline.tsx     # Timeline
+├── schema.sql           # SQLite schema definition (9 tables)
+├── pyproject.toml       # Python dependencies (uv)
+└── app.db               # SQLite database (auto-generated)
 ```
-
-## Components
-
-### Agents & Skills
-Users can define new agents or extend capabilities by adding files to the `agents/` and `skills/` directories. These can also be managed independently as Git repositories.
-
-### Tools (in `tools/`)
-A collection of tools implemented in Python. Placing them in the root `tools/` directory allows for easy extension and integration. These tools can be referenced from agent configurations.
-
-### Docker Sandbox
-When agents execute code, it runs in isolation within a Docker container. This prevents unintended changes to the system and mitigates security risks.
 
 ## Setup
 
-1. **Prepare LLM Backend**: Have an OpenAI API compatible server or an OpenAI API key ready.
-2. **Configure Environment Variables**: Create a `.env` file and set the necessary API keys and secrets.
-3. **Start**:
-    ```bash
-    uv run python app/main.py
-    ```
+### Prerequisites
+
+- Python >= 3.11
+- [uv](https://docs.astral.sh/uv/) (package manager)
+- Node.js >= 18 (for frontend build)
+
+### Steps
+
+```bash
+# 1. Install dependencies
+uv sync
+
+# 2. Build frontend
+cd ui && npm install && npm run build && cd ..
+
+# 3. Start server
+uv run python3 -m main
+```
+
+On first launch, `app.db` is auto-generated and an admin token is printed to the console.
+
+### Default Provider
+
+The initial seed registers a `local` provider (Apple On-Device / `http://127.0.0.1:11535/v1`).
+To use external LLMs, add providers through the Web UI.
 
 ## Usage
 
-1. Create a new agent directory in `agents/` and define a `contract.toml`.
-2. Access the Web UI (`http://localhost:8000/ui`) to verify the agent is recognized.
-3. POST the content of `TASK.md` to the agent's endpoint.
+1. **Open `http://localhost:8000` in a browser**
+2. **Log in with the initial token** (the `fol_...` token printed to console)
+3. **Register a Provider** — Configure LLM connection details
+4. **Create an Agent** — Set model, prompt, and capabilities
+5. **Chat** — Start a real-time conversation from the agent detail page
 
-```bash
-curl -X POST http://localhost:8000/api/agents/{agent_id}/invoke \
-  -H "Content-Type: text/plain" \
-  --data-binary @TASK.md
-```
+### API
+
+Key endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/capabilities` | List capability tags |
+| GET/POST | `/agents` | List / create agents |
+| GET/PUT/DELETE | `/agent/{id}` | Get / update / delete agent |
+| WS | `/agent/{id}/chat` | WebSocket chat |
+| POST | `/agent/{id}/avatar` | Upload avatar |
+| GET/POST | `/providers` | List / create providers |
+| GET/PUT/DELETE | `/provider/{id}` | Get / update / delete provider |
+| GET/POST | `/skills` | List / create skills |
+| GET/POST | `/approvals` | List / create approvals |
+| PUT | `/approval/{id}` | Update approval status |
+| GET/POST | `/tokens` | List / create tokens |
+| DELETE | `/token/{id}` | Delete token |
+| POST | `/auth/login` | Token authentication |
+
+All endpoints require `Authorization: Bearer <token>` header (except `/auth/login`).
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| LLM Runtime | pydantic-ai 1.62+ |
+| Backend | FastAPI + Uvicorn |
+| Database | SQLite (SQLModel / SQLAlchemy) |
+| Frontend | SolidJS + TypeScript + Vite |
+| Styling | TailwindCSS (achromatic design) |
+| Package Management | uv (Python) / npm (Node.js) |

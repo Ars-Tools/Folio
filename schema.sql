@@ -1,8 +1,8 @@
 -- ==========================================================================
 -- FOLIO — canonical schema  (SQLite)
--- Generated from app/models/*.py
+-- Generated from models/*.py
 -- Run: sqlite3 app.db < schema.sql
--- Or:  python -c "from app.core.db import init_db; init_db()"
+-- Or:  python -c "from core.db import init_db; init_db()"
 -- ==========================================================================
 
 PRAGMA journal_mode = WAL;
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS providers (
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS agents (
     id           TEXT PRIMARY KEY,
-    provider     TEXT NOT NULL REFERENCES providers(id),
+    provider     TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
     model        TEXT NOT NULL,
     name         TEXT NOT NULL,
     prompt       TEXT NOT NULL DEFAULT '',
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE TABLE IF NOT EXISTS chats (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     user     TEXT NOT NULL,
-    agent    TEXT NOT NULL REFERENCES agents(id),
+    agent    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     messages TEXT NOT NULL DEFAULT '[]',
     "update" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS ix_chats_agent ON chats(agent);
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS approvals (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent    TEXT NOT NULL REFERENCES agents(id),
+    agent    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     request  TEXT NOT NULL,
     status   TEXT NOT NULL DEFAULT 'pending'
                  CHECK (status IN ('pending', 'approved', 'denied')),
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS crons (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent    TEXT NOT NULL REFERENCES agents(id),
+    agent    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     pattern  TEXT NOT NULL,
     message  TEXT NOT NULL,
     execute  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS crons (
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS journals (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent     TEXT NOT NULL REFERENCES agents(id),
+    agent     TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     abstract  TEXT,
     body      TEXT NOT NULL,
     timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -111,8 +111,8 @@ CREATE TABLE IF NOT EXISTS skills (
 -- equips — many-to-many: which skills are equipped to which agents
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS equips (
-    skill    TEXT NOT NULL REFERENCES skills(id),
-    agent    TEXT NOT NULL REFERENCES agents(id),
+    skill    TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    agent    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     "update" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (skill, agent)
 );

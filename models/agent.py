@@ -3,13 +3,16 @@
 """Agent table — agent configuration stored in DB."""
 from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field
+import sqlalchemy as sa
 
 
 class Agent(SQLModel, table=True):
     __tablename__ = "agents"
 
     id: str = Field(primary_key=True)
-    provider: str = Field(foreign_key="providers.id")
+    provider: str = Field(
+        sa_column=sa.Column(sa.String, sa.ForeignKey("providers.id", ondelete="CASCADE"), nullable=False),
+    )
     model: str
     name: str
     prompt: str = Field(default="")
