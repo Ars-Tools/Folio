@@ -26,7 +26,7 @@ def _seed_db():
             db.add(Provider(
                 id="local",
                 name="Apple On-Device",
-                kind="openai-responses",
+                kind="openai-chat",
                 endpoint="http://127.0.0.1:11535/v1",
                 apikey="local",
             ))
