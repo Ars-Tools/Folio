@@ -11,3 +11,4 @@ uv.lock
 .venv
 ui/package-lock.json
 ui/node_modules/
+folio.db
