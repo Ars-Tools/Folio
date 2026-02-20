@@ -4,23 +4,21 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 from pydantic import BaseModel
+from sqlmodel import Session as DBSession, select
 from pathlib import Path
-from collections import defaultdict
+from datetime import datetime, timezone
 import tomllib
 import uuid
-import jwt
-import json
 
 from ..core.agent import _agent
-from ..core.auth import get_current_sender, SECRET_KEY, ALGORITHM
-from ..schema.session import Sender, Session, Category
+from ..core.auth import get_current_sender, get_session, authenticate_websocket
+from ..core.db import get_db, engine
+from ..models.session import Sender, Session, Category
+from ..models.chat import ChatSession
 
 agents: dict[str, Agent] = {}
 agents_config: dict[str, dict] = {}
 agents_dir = Path(__file__).parent.parent.parent / "agents"
-
-# In-memory chat history: key = (user_id, agent_id) → list[ModelMessage]
-chat_histories: dict[tuple[str, str], list[ModelMessage]] = defaultdict(list)
 
 if not agents_dir.exists():
     raise FileNotFoundError(f"Agents directory not found: {agents_dir}")
@@ -114,8 +112,33 @@ async def reload_agent(agent_id: str):
     return {"status": "ok"}
 
 # -----------------------------------------------------------------------------
-# Chat history
+# Chat history helpers (SQLite)
 # -----------------------------------------------------------------------------
+
+def _load_history(db: DBSession, user_id: str, agent_id: str) -> list[ModelMessage]:
+    """Load persisted message history from the DB."""
+    row = db.exec(
+        select(ChatSession).where(ChatSession.user_id == user_id, ChatSession.agent_id == agent_id)
+    ).first()
+    if not row or row.messages_json == "[]":
+        return []
+    return list(ModelMessagesTypeAdapter.validate_json(row.messages_json))
+
+
+def _save_history(db: DBSession, user_id: str, agent_id: str, messages: list[ModelMessage]) -> None:
+    """Upsert message history into the DB."""
+    row = db.exec(
+        select(ChatSession).where(ChatSession.user_id == user_id, ChatSession.agent_id == agent_id)
+    ).first()
+    json_bytes = ModelMessagesTypeAdapter.dump_json(messages)
+    if row:
+        row.messages_json = json_bytes.decode()
+        row.updated_at = datetime.now(timezone.utc)
+    else:
+        row = ChatSession(user_id=user_id, agent_id=agent_id, messages_json=json_bytes.decode())
+        db.add(row)
+    db.commit()
+
 
 def _extract_display_messages(messages: list[ModelMessage]) -> list[dict]:
     """Convert pydantic-ai ModelMessages to simple {sender, content, timestamp} dicts for the frontend."""
@@ -139,38 +162,33 @@ def _extract_display_messages(messages: list[ModelMessage]) -> list[dict]:
                 })
     return out
 
+
 @router.get("/agent/{agent_id}/history")
-async def get_chat_history(agent_id: str, current_sender: Sender = Depends(get_current_sender)):
+async def get_chat_history(agent_id: str, current_sender: Sender = Depends(get_current_sender), db: DBSession = Depends(get_db)):
     """Return chat history for the current user + agent."""
     if agent_id not in agents:
         raise HTTPException(status_code=404, detail="Agent not found")
-    key = (current_sender.id, agent_id)
-    history = chat_histories.get(key, [])
+    history = _load_history(db, current_sender.id, agent_id)
     return {"messages": _extract_display_messages(history)}
 
+
 @router.delete("/agent/{agent_id}/history")
-async def clear_chat_history(agent_id: str, current_sender: Sender = Depends(get_current_sender)):
+async def clear_chat_history(agent_id: str, current_sender: Sender = Depends(get_current_sender), db: DBSession = Depends(get_db)):
     """Clear chat history for the current user + agent."""
-    key = (current_sender.id, agent_id)
-    chat_histories.pop(key, None)
+    row = db.exec(
+        select(ChatSession).where(ChatSession.user_id == current_sender.id, ChatSession.agent_id == agent_id)
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
     return {"status": "ok"}
+
 
 @router.websocket("/agent/{agent_id}/chat")
 async def websocket_chat(websocket: WebSocket, agent_id: str):
     await websocket.accept()
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if not user_id:
-             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-             return
-    except jwt.InvalidTokenError:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    sender = await authenticate_websocket(websocket)
+    if not sender:
         return
 
     if agent_id not in agents:
@@ -178,21 +196,20 @@ async def websocket_chat(websocket: WebSocket, agent_id: str):
          return
 
     agent = agents[agent_id]
-    sender = Sender(id=user_id, name=user_id, category=Category.user)
-    session_instance = Session(id=str(uuid.uuid4()), sender=sender)
-    history_key = (user_id, agent_id)
+    session = Session(id=str(uuid.uuid4()), sender=sender)
 
     try:
         while True:
             data = await websocket.receive_text()
             try:
-                message_history = chat_histories.get(history_key, [])
-                async with agent.run_stream(data, deps=session_instance, message_history=message_history) as result:
+                with DBSession(engine) as db:
+                    message_history = _load_history(db, sender.id, agent_id)
+                async with agent.run_stream(data, deps=session, message_history=message_history) as result:
                     async for chunk in result.stream_text(delta=True):
                         await websocket.send_text(chunk)
                     await websocket.send_text("\x00")  # end-of-stream signal
-                    # Store the full conversation history
-                    chat_histories[history_key] = result.all_messages()
+                    with DBSession(engine) as db:
+                        _save_history(db, sender.id, agent_id, result.all_messages())
             except Exception as e:
                 error_msg = f"[Error] {type(e).__name__}: {e}"
                 await websocket.send_text(error_msg)
