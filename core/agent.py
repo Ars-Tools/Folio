@@ -14,18 +14,18 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 from sqlmodel import Session as DBSession, select
 import json
 
-from ..models.agent import Agent as AgentRow
-from ..models.provider import Provider
-from ..models.skill import Skill
-from ..models.equip import Equip
-from ..models.session import Session
-from .capabilities import CAPABILITY_MAP, CapKind
+from models.agent import Agent as AgentRow
+from models.provider import Provider
+from models.skill import Skill
+from models.equip import Equip
+from models.session import Session
+from core.capabilities import CAPABILITY_MAP, CapKind
 
 
 # ── Built-in tool factories ────────────────────────────────────────
@@ -52,7 +52,10 @@ _CUSTOM_FACTORIES: dict[str, callable] = {
 
 def build_model(agent_row: AgentRow, provider_row: Provider) -> Model:
     """Build a pydantic-ai Model from DB rows."""
-    if provider_row.kind in ("openai-completions", "openai-responses"):
+    if provider_row.kind == "openai-responses":
+        provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
+        return OpenAIResponsesModel(agent_row.model, provider=provider)
+    if provider_row.kind == "openai-completions":
         provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
         return OpenAIChatModel(agent_row.model, provider=provider)
     raise ValueError(f"Unsupported provider kind: {provider_row.kind}")
@@ -94,9 +97,14 @@ def _build_settings(agent_row: AgentRow, caps: set[str]) -> ModelSettings | None
     return ms or None
 
 
-def _build_tools(caps: set[str]) -> list:
-    """Instantiate tools for every builtin/custom capability enabled."""
-    tools: list = []
+def _build_tools(caps: set[str]) -> tuple[list, list]:
+    """Instantiate tools for every builtin/custom capability enabled.
+    
+    Returns (builtin_tools, custom_tools) — builtin tools go to Agent(builtin_tools=...),
+    custom tools go to Agent(tools=...).
+    """
+    builtin: list = []
+    custom: list = []
     for cap_id in caps:
         cap = CAPABILITY_MAP.get(cap_id)
         if cap is None:
@@ -104,12 +112,12 @@ def _build_tools(caps: set[str]) -> list:
         if cap.kind == CapKind.BUILTIN:
             factory = _BUILTIN_FACTORIES.get(cap_id)
             if factory:
-                tools.append(factory())
+                builtin.append(factory())
         elif cap.kind == CapKind.CUSTOM:
             factory = _CUSTOM_FACTORIES.get(cap_id)
             if factory:
-                tools.append(factory())
-    return tools
+                custom.append(factory())
+    return builtin, custom
 
 
 def build_agent(agent_row: AgentRow, provider_row: Provider, db: DBSession) -> PydanticAgent:
@@ -128,12 +136,13 @@ def build_agent(agent_row: AgentRow, provider_row: Provider, db: DBSession) -> P
     caps: set[str] = set(json.loads(agent_row.capabilities)) if agent_row.capabilities else set()
 
     settings = _build_settings(agent_row, caps)
-    tools = _build_tools(caps)
+    builtin_tools, custom_tools = _build_tools(caps)
 
     return PydanticAgent(
         model,
         system_prompt=prompt,
         deps_type=Session,
         model_settings=settings,
-        tools=tools if tools else [],
+        builtin_tools=builtin_tools if builtin_tools else [],
+        tools=custom_tools if custom_tools else [],
     )

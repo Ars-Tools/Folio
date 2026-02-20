@@ -7,9 +7,9 @@ import os
 import secrets
 import uuid
 
-from app.models.session import Sender, Session, Category
-from app.models.token import Token, TokenKind
-from app.core.db import get_db, engine
+from models.session import Sender, Session, Category
+from models.token import Token, TokenKind
+from core.db import get_db, engine
 
 SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
