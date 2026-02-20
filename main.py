@@ -2,15 +2,15 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from app.api.agents import router as agents_router, load_agents
-from app.api.auth import router as auths_router
-from app.api.approvals import router as approvals_router
-from app.api.providers import router as providers_router
-from app.api.skills import router as skills_router
-from app.api.tokens import router as tokens_router
-from app.core.db import init_db, engine
-from app.models.provider import Provider
-from app.models.token import Token, TokenKind
+from api.agents import router as agents_router, load_agents
+from api.auth import router as auths_router
+from api.approvals import router as approvals_router
+from api.providers import router as providers_router
+from api.skills import router as skills_router
+from api.tokens import router as tokens_router
+from core.db import init_db, engine
+from models.provider import Provider
+from models.token import Token, TokenKind
 
 from sqlmodel import Session as DBSession, select
 from contextlib import asynccontextmanager
@@ -64,8 +64,8 @@ app.include_router(skills_router)
 app.include_router(tokens_router)
 
 # Mount frontend if built
-if os.path.exists("app/ui/dist"):
-    app.mount("/assets", StaticFiles(directory="app/ui/dist/assets"), name="assets")
+if os.path.exists("ui/dist"):
+    app.mount("/assets", StaticFiles(directory="ui/dist/assets"), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
@@ -80,7 +80,7 @@ if os.path.exists("app/ui/dist"):
              from fastapi import HTTPException
              raise HTTPException(status_code=404, detail="Not Found")
         
-        return FileResponse("app/ui/dist/index.html")
+        return FileResponse("ui/dist/index.html")
 
 if __name__ == "__main__":
     import uvicorn
