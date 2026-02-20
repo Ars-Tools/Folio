@@ -4,12 +4,21 @@ from fastapi.responses import FileResponse
 
 from app.api.agents import router as agents_router
 from app.api.auth import router as auths_router
+from app.core.db import init_db, engine
+from app.models.user import User
 
+from sqlmodel import Session as DBSession, select
 from contextlib import asynccontextmanager
 import os
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # prepare
+    # prepare — create tables & seed default user
+    init_db()
+    with DBSession(engine) as db:
+        if not db.exec(select(User).where(User.name == "admin")).first():
+            db.add(User(name="admin", password_hash=User.hash_password("admin123")))
+            db.commit()
     yield
     # cleanup
 
