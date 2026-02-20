@@ -12,8 +12,8 @@ from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
 from tools.expr import expr
 
-from ..schema.session import Session
-from ..schema.session import Sender
+from ..models.session import Session
+from ..models.session import Sender
 
 def _model(config: dict[str, any]) -> Model:
     if not u'name' in config:
