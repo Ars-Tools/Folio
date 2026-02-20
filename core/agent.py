@@ -55,7 +55,7 @@ def build_model(agent_row: AgentRow, provider_row: Provider) -> Model:
     if provider_row.kind == "openai-responses":
         provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
         return OpenAIResponsesModel(agent_row.model, provider=provider)
-    if provider_row.kind == "openai-completions":
+    if provider_row.kind in ("openai-chat", "openai-completions"):
         provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
         return OpenAIChatModel(agent_row.model, provider=provider)
     raise ValueError(f"Unsupported provider kind: {provider_row.kind}")
