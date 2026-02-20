@@ -12,3 +12,4 @@ uv.lock
 ui/package-lock.json
 ui/node_modules/
 folio.db
+app.db

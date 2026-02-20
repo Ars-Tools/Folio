@@ -282,7 +282,7 @@ export default function Chats(props: { token: string; onLogout: () => void }) {
                 disabled={!input().trim() || !selectedAgent()}
                 class={`px-5 py-3 rounded-xl font-medium text-sm transition-all
                   ${input().trim() && selectedAgent()
-                    ? "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/20"
+                    ? "bg-neutral-200 hover:bg-white text-neutral-900"
                     : "bg-neutral-800 text-neutral-600 cursor-not-allowed border border-neutral-700"
                   }`}
               >

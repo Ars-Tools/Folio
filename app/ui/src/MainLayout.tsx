@@ -4,12 +4,14 @@ import Agents from "./Agents";
 import AgentDetail from "./AgentDetail";
 import Timeline from "./Timeline";
 import Sessions from "./Sessions";
-import Settings from "./Settings";
 import Approvals from "./Approvals";
+import Skills from "./Skills";
+import Tokens from "./Tokens";
+import Providers from "./Providers";
 
-type Page = "dashboard" | "timeline" | "sessions" | "agents" | "settings" | "approvals" | "agent-detail";
+type Page = "dashboard" | "timeline" | "sessions" | "agents" | "approvals" | "skills" | "tokens" | "providers" | "agent-detail";
 
-const validPages: Page[] = ["dashboard", "timeline", "sessions", "agents", "settings", "approvals", "agent-detail"];
+const validPages: Page[] = ["dashboard", "timeline", "sessions", "agents", "approvals", "skills", "tokens", "providers", "agent-detail"];
 
 /** Parse hash like #agents or #agent-detail/nova */
 function parseHash(): { page: Page; agentId: string } {
@@ -80,18 +82,18 @@ export default function MainLayout(props: MainLayoutProps) {
         <nav class="flex-1 p-4 overflow-y-auto">
           <div class="mb-6">
             <h2 class="px-4 text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-              Platform
+              Operator
             </h2>
             <NavItem page="dashboard" label="Dashboard" />
-            <NavItem page="timeline" label="Timeline" />
-            <NavItem page="sessions" label="Session" />
+            <NavItem page="approvals" label="Pending" />
           </div>
 
           <div class="mb-6">
             <h2 class="px-4 text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-              Communication
+              Platform
             </h2>
-            <NavItem page="approvals" label="Pending Approval" />
+            <NavItem page="timeline" label="Timeline" />
+            <NavItem page="sessions" label="Session" />
           </div>
 
           <div>
@@ -99,7 +101,9 @@ export default function MainLayout(props: MainLayoutProps) {
               Management
             </h2>
             <NavItem page="agents" label="Agents" />
-            <NavItem page="settings" label="Settings" />
+            <NavItem page="skills" label="Skills" />
+            <NavItem page="providers" label="Providers" />
+            <NavItem page="tokens" label="Tokens" />
           </div>
         </nav>
 
@@ -148,8 +152,14 @@ export default function MainLayout(props: MainLayoutProps) {
                 <Match when={activePage() === "agents"}>
                   <Agents token={props.token} onLogout={props.onLogout} onSelectAgent={openAgent} />
                 </Match>
-                <Match when={activePage() === "settings"}>
-                  <Settings />
+                <Match when={activePage() === "skills"}>
+                  <Skills token={props.token} onLogout={props.onLogout} />
+                </Match>
+                <Match when={activePage() === "tokens"}>
+                  <Tokens token={props.token} onLogout={props.onLogout} />
+                </Match>
+                <Match when={activePage() === "providers"}>
+                  <Providers token={props.token} onLogout={props.onLogout} />
                 </Match>
               </Switch>
             </div>

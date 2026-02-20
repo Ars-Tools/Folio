@@ -1,141 +1,139 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from typing import Annotated
-from pydantic_ai import Agent, ConcurrencyLimiter, ConcurrencyLimitedModel, RunContext
+"""Build pydantic-ai Agent instances from DB rows."""
+from __future__ import annotations
+
+from pydantic_ai import Agent as PydanticAgent, ConcurrencyLimiter, ConcurrencyLimitedModel
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.models import Model
-from pydantic_ai.providers import Provider
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.settings import ModelSettings
+from sqlmodel import Session as DBSession, select
+import json
 
-from pydantic_ai.builtin_tools import WebSearchTool, WebFetchTool, CodeExecutionTool, ImageGenerationTool
-from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
-
-from tools.expr import expr
-
+from ..models.agent import Agent as AgentRow
+from ..models.provider import Provider
+from ..models.skill import Skill
+from ..models.equip import Equip
 from ..models.session import Session
-from ..models.session import Sender
+from .capabilities import CAPABILITY_MAP, CapKind
 
-def _model(config: dict[str, any]) -> Model:
-    if not u'name' in config:
-        raise ValueError("Model name is required in the 'model' table of the TOML config.")
-    if not u'endpoint' in config:
-        raise ValueError("Model endpoint is required in the 'model' table of the TOML config.")
-    if not u'provider' in config:
-        raise ValueError("Model provider is required in the 'model' table of the TOML config.")
-    return OpenAIChatModel(
-        config.get('name'), 
-        provider=OpenAIProvider(base_url=config.get('endpoint', ''), api_key=config.get('apikey', ''))
-    ) if config.get('provider') in ['openai-completions', 'openai-responses'] else None # Extendable for other providers        
-    
-def _identity(config: dict[str, any]) -> str:
-    identities: [str] = []
-    if u'soul' in config:
-        with open(config['soul'], 'r') as f:
-            identities.append(f.read())
-    if u'rule' in config:
-        with open(config['rule'], 'r') as f:
-            identities.append(f.read())
-    if u'user' in config:
-        with open(config['user'], 'r') as f:
-            identities.append(f.read())
-    if u'memory' in config:
-        with open(config['memory'], 'r') as f:
-            identities.append(f.read())
-    return u'\r\n'.join(identities)
 
-def _agent(config: dict[str, any]) -> Agent:
-    behavior = config.get('behavior', {})
-    return Agent(
-        ConcurrencyLimitedModel(_model(config.get('model', {})), limiter=ConcurrencyLimiter(max_running=behavior.get('concurrency', 1), name='pool')) if u'concurreny' in behavior else _model(config.get('model', {})),
-        tools=[
-            WebSearchTool,
-            WebFetchTool,
-            CodeExecutionTool, 
-            ImageGenerationTool,
-            expr,
-            duckduckgo_search_tool()
-        ],
-        deps_type=Session, 
-        system_prompt=_identity(config.get('identity', {})),
-    )
+# ── Built-in tool factories ────────────────────────────────────────
+# Maps capability id → callable that returns a PydanticAI Tool instance.
+# Kept as lazy lambdas so we only import heavy modules when actually needed.
 
-class Agentt(Agent):
-    def __init__(self, toml: any, *args, **kwargs):
-        self._home = toml.parent
-        self._id = self._home.name
-        super().__init__(*args, **kwargs)
+_BUILTIN_FACTORIES: dict[str, callable] = {
+    "web-search":       lambda: WebSearchTool(),
+    "code-execution":   lambda: CodeExecutionTool(),
+    "image-generation": lambda: ImageGenerationTool(),
+    "web-fetch":        lambda: WebFetchTool(),
+    "memory":           lambda: MemoryTool(),
+    "mcp":              lambda: MCPServerTool(),
+    "file-search":      lambda: FileSearchTool(),
+}
 
-if __name__ == '__main__':
-    from pydantic import Field
-    import asyncio
-    import tomllib
-    test_toml = """
-    [model]
-    provider = "openai-completions"
-    endpoint = "http://127.0.0.1:11535/v1"
-    name = "lfm2.5-1.2b"
-    apikey = "sk-lm-waZJK7KG:Ng26SBWHSiPgW5r0thye"
-    [behavior]
-    concurrency = 4
-    """
-    
-    config = tomllib.loads(test_toml)
-    agent = _agent(config)
+# ── Custom (Folio) tool factories ──────────────────────────────────
 
-    # @agent.tool
-    # async def reply(ctx: RunContext[Session], message: str):
-    #     """
-    #     Replies to the user with a message.
-    #     """
-    #     print(f"[Tool:Reply] {message} (User: {ctx.deps})")
-    #     return "Message sent."
-    
-    # @agent.tool
-    # async def relay(
-    #     ctx: RunContext[Session], 
-    #     message: Annotated[str, Field(description="The message to relay")], 
-    #     target: Annotated[str, Field(description="The target to relay the message to")]
-    # ):
-    #     """
-    #     Relays a message to another system component.
-    #     """
-    #     print(f"[Tool:Relay] {message} (Target: {target})")
-    #     return "Message relayed."
-    
-    # @agent.tool
-    # def get_weather(
-    #     ctx: RunContext[Session], 
-    #     city: Annotated[str, Field(description="The name of the city for which to retrieve the weather.")]
-    # ) -> str:
-    #     """
-    #     Retrieves the current weather for the specified city.
+_CUSTOM_FACTORIES: dict[str, callable] = {
+    # "shell":          lambda: ...,
+    # "pyfoundations":  lambda: ...,
+}
 
-    #     Returns a string containing the weather condition and temperature.
-    #     """
-    #     # In reality, this would involve calling an external API.
-    #     print(f"[Tool Used] get_weather called for {city} by user {ctx.deps}")
 
-    #     # Dummy response
-    #     if city in ["東京", "Tokyo"]:
-    #         return "Sunny, 25°C"
-    #     elif city in ["大阪", "Osaka"]:
-    #         return "Cloudy, 22°C"
-    #     else:
-    #         return "Unknown city"
+def build_model(agent_row: AgentRow, provider_row: Provider) -> Model:
+    """Build a pydantic-ai Model from DB rows."""
+    if provider_row.kind in ("openai-completions", "openai-responses"):
+        provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
+        return OpenAIChatModel(agent_row.model, provider=provider)
+    raise ValueError(f"Unsupported provider kind: {provider_row.kind}")
 
-    async def run_test():
-        deps = Session(
-            id="test-session",
-            sender=Sender(id="user-123", name="Kota", category="user")
+
+def build_prompt(agent_row: AgentRow, db: DBSession) -> str:
+    """Build system prompt from agent's own prompt + equipped skills."""
+    parts: list[str] = []
+    if agent_row.prompt:
+        parts.append(agent_row.prompt)
+    equips = db.exec(select(Equip).where(Equip.agent == agent_row.id)).all()
+    for equip in equips:
+        skill = db.get(Skill, equip.skill)
+        if skill and skill.body:
+            parts.append(skill.body)
+    return "\n".join(parts)
+
+
+def _build_settings(agent_row: AgentRow, caps: set[str]) -> ModelSettings | None:
+    """Build ModelSettings from stored params + flag capabilities."""
+    raw_params = json.loads(agent_row.model_params) if agent_row.model_params else {}
+    ms: ModelSettings = {}
+
+    # Numeric params
+    for key, cast in [
+        ("temperature", float), ("top_p", float),
+        ("max_tokens", int), ("seed", int),
+        ("presence_penalty", float), ("frequency_penalty", float),
+    ]:
+        if key in raw_params:
+            ms[key] = cast(raw_params[key])
+
+    # ── Flag capabilities ──────────────────────────────────────────
+    if "reasoning" in caps:
+        # Providers that support extended thinking (o-series, DeepSeek-R1, …)
+        # expose it under different keys; pydantic-ai normalises to these:
+        ms["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+
+    return ms or None
+
+
+def _build_tools(caps: set[str]) -> list:
+    """Instantiate tools for every builtin/custom capability enabled."""
+    tools: list = []
+    for cap_id in caps:
+        cap = CAPABILITY_MAP.get(cap_id)
+        if cap is None:
+            continue
+        if cap.kind == CapKind.BUILTIN:
+            factory = _BUILTIN_FACTORIES.get(cap_id)
+            if factory:
+                tools.append(factory())
+        elif cap.kind == CapKind.CUSTOM:
+            factory = _CUSTOM_FACTORIES.get(cap_id)
+            if factory:
+                tools.append(factory())
+    return tools
+
+
+def build_agent(agent_row: AgentRow, provider_row: Provider, db: DBSession) -> PydanticAgent:
+    """Build a complete pydantic-ai Agent from DB rows."""
+    model = build_model(agent_row, provider_row)
+
+    if agent_row.concurrency:
+        model = ConcurrencyLimitedModel(
+            model,
+            limiter=ConcurrencyLimiter(max_running=agent_row.concurrency, name=f"pool-{agent_row.id}"),
         )
-        # print("[Question] 明日の東京の天気は？")
-        # result = await agent.run("明日の東京の天気は？", deps=deps)
-        # print("[Answer]", result.output)
 
+    prompt = build_prompt(agent_row, db)
 
-        print("[Question] What your name?")
-        result = await agent.run("diff tan(x)", deps=deps)
-        print("[Answer]", result.output)
-        print("[Answer]", result)
+    # Parse capability set
+    caps: set[str] = set(json.loads(agent_row.capabilities)) if agent_row.capabilities else set()
 
-    asyncio.run(run_test())
+    settings = _build_settings(agent_row, caps)
+    tools = _build_tools(caps)
+
+    return PydanticAgent(
+        model,
+        system_prompt=prompt,
+        deps_type=Session,
+        model_settings=settings,
+        tools=tools if tools else [],
+    )

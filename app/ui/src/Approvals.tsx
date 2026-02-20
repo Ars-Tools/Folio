@@ -19,8 +19,8 @@ export default function Approvals() {
                 <div class="text-neutral-400 text-sm">{item.task} • {item.timestamp}</div>
               </div>
               <div class="flex space-x-3">
-                <button class="px-4 py-2 bg-red-900/50 text-red-200 rounded-lg hover:bg-red-900 transition-colors border border-red-800">Deny</button>
-                <button class="px-4 py-2 bg-green-900/50 text-green-200 rounded-lg hover:bg-green-900 transition-colors border border-green-800">Approve</button>
+                <button class="px-4 py-2 text-red-400 hover:text-red-300 hover:bg-neutral-800 rounded-lg transition-colors">Deny</button>
+                <button class="px-4 py-2 bg-green-900/40 hover:bg-green-900/60 text-green-300 rounded-lg transition-colors border border-green-800/50">Approve</button>
               </div>
             </div>
           )}
