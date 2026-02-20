@@ -1,11 +1,12 @@
-from fastapi import Depends, HTTPException, status, Security
+from fastapi import Depends, HTTPException, WebSocket, status, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 import jwt
 import os
 import secrets
+import uuid
 
-from app.schema.session import Sender, Category
+from app.models.session import Sender, Session, Category
 
 SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
@@ -51,3 +52,34 @@ def get_current_sender(
         detail="Invalid credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+# ---------------------------------------------------------------------------
+# Session dependency (for agent execution context)
+# ---------------------------------------------------------------------------
+
+def get_session(sender: Sender = Depends(get_current_sender)) -> Session:
+    """Build a Session from the authenticated Sender. Use this as a FastAPI
+    dependency wherever pydantic-ai agent execution needs `deps=Session`."""
+    return Session(id=str(uuid.uuid4()), sender=sender)
+
+# ---------------------------------------------------------------------------
+# WebSocket authentication (Depends doesn't work with WS query params)
+# ---------------------------------------------------------------------------
+
+async def authenticate_websocket(websocket: WebSocket) -> Sender | None:
+    """Authenticate a WebSocket connection via ?token= query param.
+    Returns Sender on success, or closes the socket and returns None."""
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return None
+        return Sender(id=user_id, name=user_id, category=Category.user)
+    except jwt.InvalidTokenError:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return None
