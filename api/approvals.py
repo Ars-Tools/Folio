@@ -6,10 +6,10 @@ from pydantic import BaseModel
 from sqlmodel import Session as DBSession, select
 from datetime import datetime, timezone
 
-from ..core.auth import get_current_sender
-from ..core.db import get_db
-from ..models.approval import Approval, ApprovalStatus
-from ..models.agent import Agent as AgentRow
+from core.auth import get_current_sender
+from core.db import get_db
+from models.approval import Approval, ApprovalStatus
+from models.agent import Agent as AgentRow
 
 router = APIRouter()
 

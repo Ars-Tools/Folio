@@ -8,9 +8,9 @@ from typing import Optional
 from datetime import datetime, timezone
 import secrets
 
-from ..core.auth import get_current_sender
-from ..core.db import get_db
-from ..models.token import Token, TokenKind
+from core.auth import get_current_sender
+from core.db import get_db
+from models.token import Token, TokenKind
 
 router = APIRouter()
 

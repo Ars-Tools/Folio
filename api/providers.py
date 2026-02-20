@@ -8,9 +8,9 @@ from typing import Optional
 from datetime import datetime, timezone
 import httpx
 
-from ..core.auth import get_current_sender
-from ..core.db import get_db
-from ..models.provider import Provider
+from core.auth import get_current_sender
+from core.db import get_db
+from models.provider import Provider
 
 router = APIRouter()
 
@@ -103,7 +103,7 @@ async def delete_provider(provider_id: str, db: DBSession = Depends(get_db)):
     if not row:
         raise HTTPException(status_code=404, detail="Provider not found")
     # Check if any agents reference this provider
-    from ..models.agent import Agent as AgentRow
+    from models.agent import Agent as AgentRow
     agents = db.exec(select(AgentRow).where(AgentRow.provider == provider_id)).all()
     if agents:
         ids = ", ".join(a.id for a in agents)

@@ -6,10 +6,10 @@ from sqlmodel import Session as DBSession
 import jwt
 from datetime import datetime, timedelta, timezone
 
-from ..core.auth import SECRET_KEY, ALGORITHM
-from ..core.db import get_db
-from ..models.auth import AuthRequest
-from ..models.token import Token, TokenKind
+from core.auth import SECRET_KEY, ALGORITHM
+from core.db import get_db
+from models.auth import AuthRequest
+from models.token import Token, TokenKind
 
 router = APIRouter()
 

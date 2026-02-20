@@ -7,9 +7,9 @@ from sqlmodel import Session as DBSession, select
 from typing import Optional
 from datetime import datetime, timezone
 
-from ..core.auth import get_current_sender
-from ..core.db import get_db
-from ..models.skill import Skill
+from core.auth import get_current_sender
+from core.db import get_db
+from models.skill import Skill
 
 router = APIRouter()
 

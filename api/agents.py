@@ -14,16 +14,16 @@ import uuid
 import base64
 from pathlib import Path
 
-from ..core.agent import build_agent
-from ..core.auth import get_current_sender, get_session, authenticate_websocket
-from ..core.capabilities import capability_list
-from ..core.db import get_db, engine
-from ..models.session import Sender, Session, Category
-from ..models.agent import Agent as AgentRow
-from ..models.provider import Provider
-from ..models.chat import Chat
-from ..models.equip import Equip
-from ..models.skill import Skill
+from core.agent import build_agent
+from core.auth import get_current_sender, get_session, authenticate_websocket
+from core.capabilities import capability_list
+from core.db import get_db, engine
+from models.session import Sender, Session, Category
+from models.agent import Agent as AgentRow
+from models.provider import Provider
+from models.chat import Chat
+from models.equip import Equip
+from models.skill import Skill
 
 router = APIRouter()
 
