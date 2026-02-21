@@ -24,7 +24,7 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
 def init_db():
     """Create all tables. Call once at app startup."""
     from models import (  # noqa: F401 — ensure models are registered
-        Token, Provider, Agent, Chat, Approval, Cron, Journal, Skill, Equip
+        Token, Provider, Agent, Chat, Approval, Cron, Journal, Skill, Equip, Post
     )
     SQLModel.metadata.create_all(engine)
 
