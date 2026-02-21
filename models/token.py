@@ -18,4 +18,6 @@ class Token(SQLModel, table=True):
     id: str = Field(primary_key=True)
     name: str
     kind: TokenKind = Field(default=TokenKind.user)
+    profile: str = Field(default="")
+    avatar: str = Field(default="")
     update: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
