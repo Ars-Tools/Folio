@@ -23,6 +23,15 @@ def get_current_token_str(
         return credentials.credentials
     return None
 
+def create_jwt(sender: Sender) -> str:
+    """Create a JWT that fully represents a Sender."""
+    return jwt.encode(
+        {"sub": sender.id, "name": sender.name, "cat": sender.category.value},
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+
+
 def _resolve_token(token_str: str) -> Sender:
     """Resolve a Bearer token to a Sender.
     1. Try JWT decode (for web users — stateless, no DB lookup).
@@ -32,7 +41,9 @@ def _resolve_token(token_str: str) -> Sender:
         payload = jwt.decode(token_str, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         if user_id:
-            return Sender(id=user_id, name=user_id, category=Category.user)
+            name = payload.get("name", user_id)
+            cat = payload.get("cat", Category.user.value)
+            return Sender(id=user_id, name=name, category=Category(cat))
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,7 +58,7 @@ def _resolve_token(token_str: str) -> Sender:
         row = db.get(Token, token_str)
         if row:
             cat = Category.user if row.kind == TokenKind.user else Category.system
-            return Sender(id=row.name, name=row.name, category=cat)
+            return Sender(id=row.id, name=row.name, category=cat)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
