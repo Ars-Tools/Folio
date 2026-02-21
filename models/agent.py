@@ -11,10 +11,11 @@ class Agent(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     provider: str = Field(
-        sa_column=sa.Column(sa.String, sa.ForeignKey("providers.id", ondelete="CASCADE"), nullable=False),
+        sa_column=sa.Column(sa.String, sa.ForeignKey("providers.id", ondelete="RESTRICT"), nullable=False),
     )
     model: str
     name: str
+    profile: str = Field(default="")
     prompt: str = Field(default="")
     avatar: str = Field(default="")
     capabilities: str = Field(default="[]")
