@@ -7,7 +7,10 @@ from api.auth import router as auths_router
 from api.approvals import router as approvals_router
 from api.providers import router as providers_router
 from api.skills import router as skills_router
+from api.journal import router as journal_router
+from api.timeline import router as timeline_router
 from api.tokens import router as tokens_router
+from api.identity import router as identity_router
 from core.db import init_db, engine
 from models.provider import Provider
 from models.token import Token, TokenKind
@@ -16,6 +19,8 @@ from sqlmodel import Session as DBSession, select
 from contextlib import asynccontextmanager
 import os
 import secrets
+
+from core.config import HOST, PORT
 
 
 def _seed_db():
@@ -27,8 +32,7 @@ def _seed_db():
                 id="local",
                 name="Apple On-Device",
                 kind="openai-chat",
-                endpoint="http://127.0.0.1:11535/v1",
-                apikey="local",
+                config='{"base_url":"http://127.0.0.1:11535/v1","api_key":"local"}',
             ))
             db.commit()
 
@@ -61,7 +65,10 @@ app.include_router(agents_router)
 app.include_router(approvals_router)
 app.include_router(providers_router)
 app.include_router(skills_router)
+app.include_router(journal_router)
+app.include_router(timeline_router)
 app.include_router(tokens_router)
+app.include_router(identity_router)
 
 # Mount frontend if built
 if os.path.exists("ui/dist"):
@@ -72,7 +79,7 @@ if os.path.exists("ui/dist"):
         # API routes are already handled above.
         # If the path is not an API route and not an asset, serve index.html
         # Note: Ideally API routes should be under /api scope to easier distinction
-        if full_path.startswith(("api", "agent", "auth", "approval", "provider", "skill", "token", "capabilit")):
+        if full_path.startswith(("api", "agent", "auth", "approval", "journal", "provider", "skill", "timeline", "token", "capabilit", "identit")):
              # Use default 404 behavior? The route matched here, so we need to return 404 manually or let it fall through?
              # Depends on if we rely on FastAPI's default 404. 
              # Since this catch-all matches everything, standard 404 won't trigger for non-matched paths.
@@ -84,4 +91,4 @@ if os.path.exists("ui/dist"):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=HOST, port=PORT)
