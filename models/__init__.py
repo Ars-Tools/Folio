@@ -7,6 +7,7 @@ from .cron import Cron
 from .journal import Journal
 from .skill import Skill
 from .equip import Equip
+from .post import Post
 from .session import Category, Sender, Session
 from .auth import AuthRequest
 
@@ -20,6 +21,7 @@ __all__ = [
     "Journal",
     "Skill",
     "Equip",
+    "Post",
     "Category", "Sender", "Session",
     "AuthRequest",
 ]
