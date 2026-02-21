@@ -5,6 +5,8 @@ interface TokenInfo {
   full_id: string;
   name: string;
   kind: string;
+  profile: string;
+  hasAvatar: boolean;
   update: string;
 }
 
@@ -17,11 +19,19 @@ export default function Tokens(props: { token: string; onLogout: () => void }) {
   const [createdToken, setCreatedToken] = createSignal("");
   const [copied, setCopied] = createSignal(false);
   const [newName, setNewName] = createSignal("");
-  const [newKind, setNewKind] = createSignal<string>("node");
+  const [newKind, setNewKind] = createSignal<string>("user");
+  const [newDesc, setNewDesc] = createSignal("");
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [editName, setEditName] = createSignal("");
+  const [editDesc, setEditDesc] = createSignal("");
 
   const headers = () => ({
     Authorization: `Bearer ${props.token}`,
     "Content-Type": "application/json",
+  });
+
+  const authHeaders = () => ({
+    Authorization: `Bearer ${props.token}`,
   });
 
   const fetchTokens = async () => {
@@ -45,13 +55,14 @@ export default function Tokens(props: { token: string; onLogout: () => void }) {
     const res = await fetch("/tokens", {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ name: newName().trim(), kind: newKind() }),
+      body: JSON.stringify({ name: newName().trim(), kind: newKind(), profile: newDesc().trim() }),
     });
     if (res.ok) {
       const d = await res.json();
       setCreatedToken(d.id);
       setNewName("");
-      setNewKind("node");
+      setNewKind("user");
+      setNewDesc("");
       fetchTokens();
     } else {
       const d = await res.json();
@@ -63,6 +74,43 @@ export default function Tokens(props: { token: string; onLogout: () => void }) {
     const res = await fetch(`/token/${fullId}`, {
       method: "DELETE",
       headers: headers(),
+    });
+    if (res.ok) fetchTokens();
+  };
+
+  const startEdit = (tk: TokenInfo) => {
+    setEditing(tk.full_id);
+    setEditName(tk.name);
+    setEditDesc(tk.profile);
+  };
+
+  const saveEdit = async (fullId: string) => {
+    const res = await fetch(`/token/${fullId}`, {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ name: editName().trim() || undefined, profile: editDesc() }),
+    });
+    if (res.ok) {
+      setEditing(null);
+      fetchTokens();
+    }
+  };
+
+  const handleAvatarUpload = async (fullId: string, file: globalThis.File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`/token/${fullId}/avatar`, {
+      method: "PUT",
+      headers: authHeaders(),
+      body: form,
+    });
+    if (res.ok) fetchTokens();
+  };
+
+  const handleAvatarDelete = async (fullId: string) => {
+    const res = await fetch(`/token/${fullId}/avatar`, {
+      method: "DELETE",
+      headers: authHeaders(),
     });
     if (res.ok) fetchTokens();
   };
@@ -128,6 +176,7 @@ export default function Tokens(props: { token: string; onLogout: () => void }) {
                 placeholder="Display name"
                 value={newName()}
                 onInput={(e) => setNewName(e.currentTarget.value)}
+                onKeyDown={(e) => { if (!e.isComposing && e.key === "Enter") handleCreate(); }}
                 class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 text-sm"
               />
             </div>
@@ -136,13 +185,23 @@ export default function Tokens(props: { token: string; onLogout: () => void }) {
               <select
                 value={newKind()}
                 onChange={(e) => setNewKind(e.currentTarget.value)}
-                class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-neutral-500"
+                class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-neutral-500 appearance-none"
               >
                 <For each={[...TOKEN_KINDS]}>
                   {(k) => <option value={k}>{k}</option>}
                 </For>
               </select>
             </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-neutral-400 mb-1.5">Profile <span class="text-neutral-500 font-normal">Markdown</span></label>
+            <textarea
+              placeholder="What is this token for?"
+              value={newDesc()}
+              onInput={(e) => setNewDesc(e.currentTarget.value)}
+              rows={3}
+              class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 text-sm resize-y"
+            />
           </div>
           <button
             onClick={handleCreate}
@@ -157,23 +216,141 @@ export default function Tokens(props: { token: string; onLogout: () => void }) {
       <div class="space-y-3 w-full">
         <For each={tokens()} fallback={<div class="text-neutral-500">No tokens registered.</div>}>
           {(tk) => (
-            <div class="bg-neutral-800 p-5 rounded-xl border border-neutral-700 flex items-center justify-between">
-              <div class="flex items-center space-x-4 min-w-0">
-                <span class={`px-2.5 py-1 text-xs font-medium rounded-md border ${kindBadge(tk.kind)}`}>{tk.kind}</span>
-                <div class="min-w-0">
-                  <div class="font-medium truncate">{tk.name}</div>
-                  <div class="text-neutral-500 text-xs font-mono mt-0.5">{tk.id}</div>
+            <div class="bg-neutral-800 p-5 rounded-xl border border-neutral-700">
+              <Show when={editing() === tk.full_id} fallback={
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-4 min-w-0">
+                    {/* Avatar */}
+                    <div class="relative group/avatar flex-shrink-0">
+                      <Show when={tk.hasAvatar} fallback={
+                        <div class="w-10 h-10 rounded-full bg-neutral-700 flex items-center justify-center text-sm font-bold text-neutral-300">
+                          {tk.name[0]?.toUpperCase() ?? "?"}
+                        </div>
+                      }>
+                        <img
+                          src={`/token/${tk.full_id}/avatar?t=${Date.now()}`}
+                          class="w-10 h-10 rounded-full object-cover"
+                          alt=""
+                        />
+                      </Show>
+                      <label class="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover/avatar:opacity-100 flex items-center justify-center cursor-pointer transition-opacity">
+                        <span class="text-white text-xs">Edit</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          class="hidden"
+                          onChange={(e) => {
+                            const f = e.currentTarget.files?.[0];
+                            if (f) handleAvatarUpload(tk.full_id, f);
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <Show when={tk.hasAvatar}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleAvatarDelete(tk.full_id); }}
+                        class="text-[10px] text-neutral-600 hover:text-red-400 transition-colors"
+                        title="Remove avatar"
+                      >×</button>
+                    </Show>
+                    <span class={`px-2.5 py-1 text-xs font-medium rounded-md border ${kindBadge(tk.kind)}`}>{tk.kind}</span>
+                    <div class="min-w-0">
+                      <div class="font-medium truncate">{tk.name}</div>
+                      <Show when={tk.profile}>
+                        <div class="text-neutral-400 text-xs mt-0.5 truncate">{tk.profile}</div>
+                      </Show>
+                      <div class="text-neutral-500 text-xs font-mono mt-0.5">{tk.id}</div>
+                    </div>
+                  </div>
+                  <div class="flex items-center space-x-3 flex-shrink-0">
+                    <span class="text-neutral-500 text-xs">{new Date(tk.update).toLocaleString()}</span>
+                    <button
+                      onClick={() => startEdit(tk)}
+                      class="px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 rounded-lg transition-colors"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(tk.full_id)}
+                      class="px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-neutral-800 rounded-lg transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div class="flex items-center space-x-4 flex-shrink-0">
-                <span class="text-neutral-500 text-xs">{new Date(tk.update).toLocaleString()}</span>
-                <button
-                  onClick={() => handleDelete(tk.full_id)}
-                  class="px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-neutral-800 rounded-lg transition-colors"
-                >
-                  Delete
-                </button>
-              </div>
+              }>
+                {/* Edit mode */}
+                <div class="space-y-3">
+                  <div class="flex items-center space-x-3">
+                    <div class="relative group/avatar flex-shrink-0">
+                      <Show when={tk.hasAvatar} fallback={
+                        <div class="w-10 h-10 rounded-full bg-neutral-700 flex items-center justify-center text-sm font-bold text-neutral-300">
+                          {tk.name[0]?.toUpperCase() ?? "?"}
+                        </div>
+                      }>
+                        <img
+                          src={`/token/${tk.full_id}/avatar?t=${Date.now()}`}
+                          class="w-10 h-10 rounded-full object-cover"
+                          alt=""
+                        />
+                      </Show>
+                      <label class="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover/avatar:opacity-100 flex items-center justify-center cursor-pointer transition-opacity">
+                        <span class="text-white text-xs">Edit</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          class="hidden"
+                          onChange={(e) => {
+                            const f = e.currentTarget.files?.[0];
+                            if (f) handleAvatarUpload(tk.full_id, f);
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <Show when={tk.hasAvatar}>
+                      <button
+                        onClick={() => handleAvatarDelete(tk.full_id)}
+                        class="text-[10px] text-neutral-600 hover:text-red-400 transition-colors"
+                        title="Remove avatar"
+                      >×</button>
+                    </Show>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-neutral-400 mb-1">Name</label>
+                      <input
+                        type="text"
+                        value={editName()}
+                        onInput={(e) => setEditName(e.currentTarget.value)}
+                        class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500"
+                      />
+                    </div>
+                    <div class="col-span-2">
+                      <label class="block text-xs text-neutral-400 mb-1">Profile <span class="text-neutral-500">Markdown</span></label>
+                      <textarea
+                        value={editDesc()}
+                        onInput={(e) => setEditDesc(e.currentTarget.value)}
+                        rows={3}
+                        class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500 resize-y"
+                      />
+                    </div>
+                  </div>
+                  <div class="flex space-x-2">
+                    <button
+                      onClick={() => saveEdit(tk.full_id)}
+                      class="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditing(null)}
+                      class="px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-200 rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </Show>
             </div>
           )}
         </For>
