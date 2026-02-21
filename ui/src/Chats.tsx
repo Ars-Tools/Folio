@@ -92,12 +92,31 @@ export default function Chats(props: { token: string; onLogout: () => void }) {
     };
   };
 
-  const selectAgent = (agentId: string) => {
+  const selectAgent = async (agentId: string) => {
     if (selectedAgent() === agentId) return;
     setSelectedAgent(agentId);
     setMessages([]);
     setError("");
     streamingMsgId = null;
+
+    // Load persisted history
+    try {
+      const res = await fetch(`/agent/${agentId}/history`, {
+        headers: { Authorization: `Bearer ${props.token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const restored: ChatMessage[] = (data.messages ?? []).map((m: any) => ({
+          id: ++msgIdCounter,
+          sender: m.sender,
+          content: m.content,
+          timestamp: m.timestamp ?? "",
+        }));
+        setMessages(restored);
+        setTimeout(scrollToBottom, 50);
+      }
+    } catch { /* ignore – will start with empty history */ }
+
     connectWebSocket(agentId);
   };
 
@@ -118,6 +137,7 @@ export default function Chats(props: { token: string; onLogout: () => void }) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
