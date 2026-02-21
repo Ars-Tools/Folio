@@ -14,6 +14,7 @@ class Journal(SQLModel, table=True):
     agent: str = Field(
         sa_column=sa.Column(sa.String, sa.ForeignKey("agents.id", ondelete="CASCADE"), nullable=False),
     )
+    episode: Optional[str] = Field(default=None)
     abstract: Optional[str] = Field(default=None)
     body: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
