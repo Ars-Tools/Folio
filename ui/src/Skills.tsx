@@ -145,6 +145,7 @@ export default function Skills(props: { token: string; onLogout: () => void }) {
               placeholder="e.g. summarize"
               value={newId()}
               onInput={(e) => setNewId(e.currentTarget.value)}
+              onKeyDown={(e) => { if (!e.isComposing && e.key === "Enter") handleCreate(); }}
               class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 font-mono text-sm"
             />
           </div>
