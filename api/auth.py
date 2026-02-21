@@ -21,7 +21,8 @@ def login(request: AuthRequest, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     payload = {
-        "sub": row.name,
+        "sub": row.id,
+        "name": row.name,
         "exp": datetime.now(timezone.utc) + timedelta(hours=24),
     }
     jwt_str = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
