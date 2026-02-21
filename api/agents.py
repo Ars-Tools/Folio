@@ -4,14 +4,21 @@
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, status
 from fastapi.responses import Response
 from pydantic_ai import Agent as PydanticAgent
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, UserPromptPart, TextPart
 from pydantic import BaseModel
-from sqlmodel import Session as DBSession, select
+from sqlmodel import Session as DBSession, select, col
+
+
+class Done(BaseModel):
+    """Sentinel output type — forces the LLM to use tools instead of text."""
+    pass
 from typing import Optional
 from datetime import datetime, timezone
+import asyncio
 import json
 import uuid
 import base64
+import logging
 from pathlib import Path
 
 from core.agent import build_agent
@@ -24,8 +31,10 @@ from models.provider import Provider
 from models.chat import Chat
 from models.equip import Equip
 from models.skill import Skill
+from models.post import Post
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Capability tags
@@ -45,8 +54,148 @@ _agent_errors: dict[str, str] = {}  # agent_id -> error message
 
 def evict_agent(agent_id: str):
     """Remove an agent from the in-memory cache."""
+    _unsubscribe_agent_from_timeline(agent_id)
     _agents.pop(agent_id, None)
     _agent_errors.pop(agent_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Timeline subscription — agents with "timeline" capability
+# ---------------------------------------------------------------------------
+from api.timeline import subscribe, unsubscribe, posts_to_message_history, Subscriber
+
+_timeline_subs: dict[str, tuple[Subscriber, asyncio.Task, list[ModelMessage]]] = {}
+
+_HISTORY_SEED = 50  # number of recent posts to seed on subscribe
+_DEFAULT_CONTEXT_LENGTH = 8192  # fallback token budget
+
+
+def _estimate_tokens(messages: list[ModelMessage]) -> int:
+    """Rough token estimate — ~4 chars per token."""
+    total = 0
+    for msg in messages:
+        for part in msg.parts:
+            if hasattr(part, "content"):
+                total += len(part.content) // 4
+    return total
+
+
+def _slide_history(history: list[ModelMessage], context_length: int) -> None:
+    """Drop oldest messages until estimated tokens fit within *context_length*.
+
+    Mutates *history* in place.  Keeps at least the most recent message.
+    """
+    while len(history) > 1 and _estimate_tokens(history) > context_length:
+        history.pop(0)
+
+
+def _subscribe_agent_to_timeline(agent_id: str, agent_name: str) -> None:
+    """Subscribe an agent to the timeline broadcast queue.
+
+    Seeds the in-memory message_history from the DB so the agent has
+    context even after a restart.
+    """
+    if agent_id in _timeline_subs:
+        return
+
+    # Read context_length from model_params
+    with DBSession(engine) as db:
+        row = db.get(AgentRow, agent_id)
+        params = json.loads(row.model_params) if row and row.model_params else {}
+        context_length = int(params.get("context_length", _DEFAULT_CONTEXT_LENGTH))
+
+        stmt = (
+            select(Post)
+            .order_by(col(Post.id).desc())
+            .limit(_HISTORY_SEED)
+        )
+        recent = list(reversed(db.exec(stmt).all()))
+    history: list[ModelMessage] = posts_to_message_history(recent, agent_id)
+    _slide_history(history, context_length)
+
+    sender = Sender(id=agent_id, name=agent_name, category=Category.agent)
+    sub = subscribe(sender)
+    task = asyncio.create_task(_timeline_loop(agent_id, agent_name, sub, history, context_length))
+    _timeline_subs[agent_id] = (sub, task, history)
+    log.info("timeline: agent '%s' subscribed (seed=%d, ctx=%d)", agent_id, len(history), context_length)
+
+
+def _unsubscribe_agent_from_timeline(agent_id: str) -> None:
+    """Cancel an agent's timeline subscription."""
+    entry = _timeline_subs.pop(agent_id, None)
+    if entry:
+        sub, task, _history = entry
+        task.cancel()
+        unsubscribe(sub)
+        log.info("timeline: agent '%s' unsubscribed", agent_id)
+
+
+def _event_to_message(agent_id: str, post_data: dict) -> ModelMessage:
+    """Convert a timeline event payload into a ModelMessage."""
+    if post_data["sender"] == agent_id:
+        return ModelResponse(parts=[TextPart(content=post_data["body"])])
+    author = post_data.get("author", "")
+    sid = post_data.get("sender", "")
+    cat = post_data.get("category", "user")
+    label = f"[{author} ({cat}:{sid})] " if author else ""
+    return ModelRequest(parts=[UserPromptPart(content=f"{label}{post_data['body']}")])
+
+
+async def _timeline_loop(
+    agent_id: str,
+    agent_name: str,
+    sub: Subscriber,
+    history: list[ModelMessage],
+    context_length: int,
+) -> None:
+    """Drain timeline events, accumulate message_history, and run the agent.
+
+    Every new post is appended to *history* as a ``ModelMessage`` so the
+    agent always sees the full conversation.  A sliding window trims the
+    oldest messages when estimated tokens exceed *context_length*.
+
+    Self-loop is prevented by the sender-ID check: all tool calls
+    (both from chat WS and timeline loop) carry the agent's own ID
+    as the sender, so the agent's own posts are always skipped.
+    """
+    while True:
+        try:
+            event = await sub.queue.get()
+        except asyncio.CancelledError:
+            return
+        if event.get("type") != "new":
+            continue
+
+        post_data = event["post"]
+        # Accumulate every post into history
+        history.append(_event_to_message(agent_id, post_data))
+
+        # Sliding window — drop oldest messages to stay within budget
+        _slide_history(history, context_length)
+
+        # Skip own posts — prevents self-loop
+        if post_data["sender"] == agent_id:
+            continue
+
+        try:
+            agent = _agents.get(agent_id)
+            if not agent:
+                continue
+
+            author = post_data.get("author", "")
+            sid = post_data.get("sender", "")
+            cat = post_data.get("category", "user")
+            label = f"[{author} ({cat}:{sid})] " if author else ""
+            prompt = f"{label}{post_data['body']}"
+
+            sender = Sender(id=agent_id, name=agent_name, category=Category.agent)
+            session = Session(id=str(uuid.uuid4()), sender=sender)
+
+            # Pass accumulated history (excluding the trigger — it's the prompt)
+            # output_type=Done forces tool-only output (no text reply)
+            await agent.run(prompt, deps=session, message_history=history[:-1], output_type=Done, infer_name=False)
+        except Exception as exc:
+            log.error("timeline: agent %s reaction error: %s", agent_id, exc)
 
 
 def load_agents():
@@ -63,10 +212,16 @@ def load_agents():
                 _agent_errors.pop(row.id, None)
             except Exception as e:
                 _agent_errors[row.id] = str(e)
+            # Subscribe to timeline if capability is present
+            caps = set(json.loads(row.capabilities)) if row.capabilities else set()
+            if "timeline" in caps and row.id in _agents:
+                _subscribe_agent_to_timeline(row.id, row.name)
 
 
 def reload_agent(agent_id: str):
     """Rebuild a single agent from DB."""
+    # Unsubscribe from timeline before rebuilding
+    _unsubscribe_agent_from_timeline(agent_id)
     with DBSession(engine) as db:
         row = db.get(AgentRow, agent_id)
         if not row:
@@ -84,6 +239,10 @@ def reload_agent(agent_id: str):
         except Exception as e:
             _agent_errors[agent_id] = str(e)
             _agents.pop(agent_id, None)
+        # Re-subscribe if still has timeline capability
+        caps = set(json.loads(row.capabilities)) if row.capabilities else set()
+        if "timeline" in caps and agent_id in _agents:
+            _subscribe_agent_to_timeline(agent_id, row.name)
 
 
 def _get_agent(agent_id: str) -> PydanticAgent:
@@ -120,13 +279,14 @@ async def get_available_agents(db: DBSession = Depends(get_db)):
     } for r in rows]}
 
 
-_AGENT_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "Agent.md"
+_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
-def _load_prompt_template(agent_id: str, agent_name: str) -> str:
-    """Load Agent.md template and interpolate placeholders."""
-    if _AGENT_TEMPLATE.exists():
-        text = _AGENT_TEMPLATE.read_text(encoding="utf-8")
+def _load_template(filename: str, agent_id: str, agent_name: str) -> str:
+    """Load a markdown template and interpolate placeholders."""
+    path = _TEMPLATES_DIR / filename
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
         return text.replace("{{ID}}", agent_id).replace("{{NAME}}", agent_name)
     return ""
 
@@ -149,11 +309,12 @@ async def create_agent(body: AgentCreate, db: DBSession = Depends(get_db)):
         provider=provider.id,
         model="",
         name=agent_name,
-        prompt=_load_prompt_template(body.id, agent_name),
+        profile=_load_template("Profile.md", body.id, agent_name),
+        prompt=_load_template("Agent.md", body.id, agent_name),
     )
     db.add(row)
+    db.flush()
     db.commit()
-    db.refresh(row)
     # Build and cache (non-fatal if provider is unreachable)
     try:
         reload_agent(body.id)
@@ -172,6 +333,7 @@ async def get_agent_detail(agent_id: str, db: DBSession = Depends(get_db)):
         "name": row.name,
         "provider": row.provider,
         "model": row.model,
+        "profile": row.profile,
         "prompt": row.prompt,
         "avatar": bool(row.avatar),
         "capabilities": json.loads(row.capabilities),
@@ -182,6 +344,7 @@ async def get_agent_detail(agent_id: str, db: DBSession = Depends(get_db)):
 
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
+    profile: Optional[str] = None
     prompt: Optional[str] = None
     capabilities: Optional[list[str]] = None
     params: Optional[dict] = None
@@ -197,6 +360,8 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBSession = Depends
         raise HTTPException(status_code=404, detail="Agent not found")
     if body.name is not None:
         row.name = body.name
+    if body.profile is not None:
+        row.profile = body.profile
     if body.prompt is not None:
         row.prompt = body.prompt
     if body.capabilities is not None:
@@ -347,7 +512,11 @@ def _save_history(db: DBSession, user_id: str, agent_id: str, messages: list[Mod
     else:
         row = Chat(user=user_id, agent=agent_id, messages=json_bytes.decode())
         db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        log.warning("chat: failed to save history for user=%s agent=%s", user_id, agent_id, exc_info=True)
 
 
 def _extract_display_messages(messages: list[ModelMessage]) -> list[dict]:
@@ -355,21 +524,19 @@ def _extract_display_messages(messages: list[ModelMessage]) -> list[dict]:
     out: list[dict] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            text = msg.user_text_prompt
-            if text:
-                out.append({
-                    "sender": "user",
-                    "content": text,
-                    "timestamp": msg.timestamp.strftime("%H:%M") if msg.timestamp else "",
-                })
+            for part in msg.parts:
+                if isinstance(part, UserPromptPart):
+                    text = part.content if isinstance(part.content, str) else ""
+                    # Strip sender label prefix e.g. "[Name (agent:id)] "
+                    if text.startswith("[") and "] " in text:
+                        text = text[text.index("] ") + 2:]
+                    if text:
+                        ts = part.timestamp.strftime("%H:%M") if part.timestamp else ""
+                        out.append({"sender": "user", "content": text, "timestamp": ts})
         elif isinstance(msg, ModelResponse):
             text = msg.text
             if text:
-                out.append({
-                    "sender": "agent",
-                    "content": text,
-                    "timestamp": "",
-                })
+                out.append({"sender": "agent", "content": text, "timestamp": ""})
     return out
 
 
@@ -405,19 +572,33 @@ async def websocket_chat(websocket: WebSocket, agent_id: str):
         return
 
     try:
-        agent = _get_agent(agent_id)
+        _get_agent(agent_id)  # validate agent exists
     except Exception:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-    session = Session(id=str(uuid.uuid4()), sender=sender)
+
+    # Resolve agent identity for tool calls (e.g. post_to_timeline)
+    with DBSession(engine) as db:
+        agent_row = db.get(AgentRow, agent_id)
+    agent_sender = Sender(
+        id=agent_id,
+        name=agent_row.name if agent_row else agent_id,
+        category=Category.agent,
+    )
+    session = Session(id=str(uuid.uuid4()), sender=agent_sender)
+
+    # Build sender label so the agent knows who it's talking to
+    # (it can call resolve_identity with the ID to learn more)
+    sender_label = f"[{sender.name} ({sender.category.value}:{sender.id})] "
 
     try:
         while True:
             data = await websocket.receive_text()
             try:
+                agent = _get_agent(agent_id)  # always fetch latest from cache
                 with DBSession(engine) as db:
                     message_history = _load_history(db, sender.id, agent_id)
-                async with agent.run_stream(data, deps=session, message_history=message_history) as result:
+                async with agent.run_stream(sender_label + data, deps=session, message_history=message_history, infer_name=False) as result:
                     async for chunk in result.stream_text(delta=True):
                         await websocket.send_text(chunk)
                     await websocket.send_text("\x00")
