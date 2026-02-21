@@ -10,7 +10,6 @@ class Provider(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     name: str
-    kind: str
-    endpoint: str
-    apikey: str
+    kind: str                       # openai-chat | openai-responses | google-gla | google-vertex
+    config: str = Field(default="{}") # JSON — schema depends on kind
     update: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
