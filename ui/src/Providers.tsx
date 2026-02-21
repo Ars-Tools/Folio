@@ -1,39 +1,57 @@
-import { createSignal, createEffect, For, Show } from "solid-js";
+import { createSignal, createEffect, For, Show, onMount } from "solid-js";
+
+interface ConfigField {
+  key: string;
+  label: string;
+  placeholder: string;
+  secret: boolean;
+}
 
 interface ProviderInfo {
   id: string;
   name: string;
   kind: string;
-  endpoint: string;
-  apikey_masked: string;
+  config: Record<string, string>;
   update: string;
 }
-
-const PROVIDER_KINDS = ["openai-responses", "openai-chat", "anthropic", "google", "custom"] as const;
 
 export default function Providers(props: { token: string; onLogout: () => void }) {
   const [providers, setProviders] = createSignal<ProviderInfo[]>([]);
   const [error, setError] = createSignal("");
 
+  // Kind metadata from server
+  const [kinds, setKinds] = createSignal<string[]>([]);
+  const [schemas, setSchemas] = createSignal<Record<string, ConfigField[]>>({});
+
   // Create form
   const [showCreate, setShowCreate] = createSignal(false);
   const [newId, setNewId] = createSignal("");
   const [newName, setNewName] = createSignal("");
-  const [newKind, setNewKind] = createSignal("openai-responses");
-  const [newEndpoint, setNewEndpoint] = createSignal("");
-  const [newApikey, setNewApikey] = createSignal("");
+  const [newKind, setNewKind] = createSignal("");
+  const [newConfig, setNewConfig] = createSignal<Record<string, string>>({});
 
   // Edit state
   const [editId, setEditId] = createSignal<string | null>(null);
   const [editName, setEditName] = createSignal("");
   const [editKind, setEditKind] = createSignal("");
-  const [editEndpoint, setEditEndpoint] = createSignal("");
-  const [editApikey, setEditApikey] = createSignal("");
+  const [editConfig, setEditConfig] = createSignal<Record<string, string>>({});
 
   const headers = () => ({
     Authorization: `Bearer ${props.token}`,
     "Content-Type": "application/json",
   });
+
+  const fetchKinds = async () => {
+    try {
+      const res = await fetch("/providers/kinds", { headers: headers() });
+      if (res.ok) {
+        const data = await res.json();
+        setKinds(data.kinds);
+        setSchemas(data.schemas);
+        if (data.kinds.length && !newKind()) setNewKind(data.kinds[0]);
+      }
+    } catch { /* ignore */ }
+  };
 
   const fetchProviders = async () => {
     try {
@@ -49,7 +67,17 @@ export default function Providers(props: { token: string; onLogout: () => void }
     }
   };
 
+  onMount(() => { fetchKinds(); });
   createEffect(() => { fetchProviders(); });
+
+  // Reset config fields when kind changes in create form
+  createEffect(() => {
+    const k = newKind();
+    const fields = schemas()[k] || [];
+    const cfg: Record<string, string> = {};
+    for (const f of fields) cfg[f.key] = "";
+    setNewConfig(cfg);
+  });
 
   const handleCreate = async () => {
     if (!newId().trim()) return;
@@ -61,12 +89,11 @@ export default function Providers(props: { token: string; onLogout: () => void }
         id: newId().trim(),
         name: newName().trim() || newId().trim(),
         kind: newKind(),
-        endpoint: newEndpoint().trim(),
-        apikey: newApikey(),
+        config: newConfig(),
       }),
     });
     if (res.ok) {
-      setNewId(""); setNewName(""); setNewKind("openai-responses"); setNewEndpoint(""); setNewApikey("");
+      setNewId(""); setNewName(""); setNewConfig({});
       setShowCreate(false);
       fetchProviders();
     } else {
@@ -79,8 +106,8 @@ export default function Providers(props: { token: string; onLogout: () => void }
     setEditId(p.id);
     setEditName(p.name);
     setEditKind(p.kind);
-    setEditEndpoint(p.endpoint);
-    setEditApikey("");
+    // Pre-fill with masked values from server
+    setEditConfig({ ...p.config });
   };
 
   const cancelEdit = () => setEditId(null);
@@ -89,16 +116,14 @@ export default function Providers(props: { token: string; onLogout: () => void }
     const id = editId();
     if (!id) return;
     setError("");
-    const body: Record<string, string> = {
-      name: editName(),
-      kind: editKind(),
-      endpoint: editEndpoint(),
-    };
-    if (editApikey()) body.apikey = editApikey();
     const res = await fetch(`/provider/${id}`, {
       method: "PUT",
       headers: headers(),
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        name: editName(),
+        kind: editKind(),
+        config: editConfig(),
+      }),
     });
     if (res.ok) {
       setEditId(null);
@@ -127,11 +152,52 @@ export default function Providers(props: { token: string; onLogout: () => void }
     const colors: Record<string, string> = {
       "openai-responses": "bg-emerald-900/60 text-emerald-200 border-emerald-700",
       "openai-chat": "bg-blue-900/60 text-blue-200 border-blue-700",
-      "anthropic": "bg-amber-900/60 text-amber-200 border-amber-700",
-      "google": "bg-cyan-900/60 text-cyan-200 border-cyan-700",
-      "custom": "bg-neutral-700 text-neutral-300 border-neutral-600",
+      "google": "bg-amber-900/60 text-amber-200 border-amber-700",
+      "anthropic": "bg-orange-900/60 text-orange-200 border-orange-700",
+      "xai": "bg-neutral-800/60 text-neutral-200 border-neutral-500",
     };
     return colors[kind] || "bg-neutral-700 text-neutral-300 border-neutral-600";
+  };
+
+  /** Render config fields for a given kind */
+  const ConfigFields = (cfgProps: {
+    kind: string;
+    config: Record<string, string>;
+    setConfig: (c: Record<string, string>) => void;
+    placeholderOverride?: boolean; // when true, use "leave empty to keep" for secret fields
+  }) => {
+    const fields = () => schemas()[cfgProps.kind] || [];
+    return (
+      <div class="space-y-3">
+        <For each={fields()}>
+          {(f) => (
+            <div>
+              <label class="block text-xs font-medium text-neutral-400 mb-1.5">{f.label}</label>
+              <input
+                type={f.secret ? "password" : "text"}
+                placeholder={cfgProps.placeholderOverride && f.secret ? "Leave empty to keep current" : f.placeholder}
+                value={cfgProps.config[f.key] || ""}
+                onInput={(e) => cfgProps.setConfig({ ...cfgProps.config, [f.key]: e.currentTarget.value })}
+                onKeyDown={(e) => { if (!e.isComposing && e.key === "Enter") handleCreate(); }}
+                class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 font-mono text-sm"
+              />
+            </div>
+          )}
+        </For>
+      </div>
+    );
+  };
+
+  /** Summarise config for list view (show non-secret values) */
+  const configSummary = (kind: string, config: Record<string, string>) => {
+    const fields = schemas()[kind] || [];
+    const parts: string[] = [];
+    for (const f of fields) {
+      const v = config[f.key];
+      if (!v) continue;
+      parts.push(f.secret ? `${f.label}: ${v}` : `${f.label}: ${v}`);
+    }
+    return parts.join("  ·  ") || "—";
   };
 
   return (
@@ -164,6 +230,7 @@ export default function Providers(props: { token: string; onLogout: () => void }
                 placeholder="e.g. openai"
                 value={newId()}
                 onInput={(e) => setNewId(e.currentTarget.value)}
+                onKeyDown={(e) => { if (!e.isComposing && e.key === "Enter") handleCreate(); }}
                 class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 font-mono text-sm"
               />
             </div>
@@ -174,44 +241,24 @@ export default function Providers(props: { token: string; onLogout: () => void }
                 placeholder="Display name"
                 value={newName()}
                 onInput={(e) => setNewName(e.currentTarget.value)}
+                onKeyDown={(e) => { if (!e.isComposing && e.key === "Enter") handleCreate(); }}
                 class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 text-sm"
               />
             </div>
           </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-xs font-medium text-neutral-400 mb-1.5">Type</label>
-              <select
-                value={newKind()}
-                onChange={(e) => setNewKind(e.currentTarget.value)}
-                class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-neutral-500 appearance-none"
-              >
-                <For each={[...PROVIDER_KINDS]}>
-                  {(k) => <option value={k}>{k}</option>}
-                </For>
-              </select>
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-neutral-400 mb-1.5">Endpoint</label>
-              <input
-                type="text"
-                placeholder="https://api.openai.com/v1"
-                value={newEndpoint()}
-                onInput={(e) => setNewEndpoint(e.currentTarget.value)}
-                class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 font-mono text-sm"
-              />
-            </div>
-          </div>
           <div>
-            <label class="block text-xs font-medium text-neutral-400 mb-1.5">API Key</label>
-            <input
-              type="password"
-              placeholder="sk-..."
-              value={newApikey()}
-              onInput={(e) => setNewApikey(e.currentTarget.value)}
-              class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 font-mono text-sm"
-            />
+            <label class="block text-xs font-medium text-neutral-400 mb-1.5">Type</label>
+            <select
+              value={newKind()}
+              onChange={(e) => setNewKind(e.currentTarget.value)}
+              class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-neutral-500 appearance-none"
+            >
+              <For each={kinds()}>
+                {(k) => <option value={k}>{k}</option>}
+              </For>
+            </select>
           </div>
+          <ConfigFields kind={newKind()} config={newConfig()} setConfig={setNewConfig} />
           <button
             onClick={handleCreate}
             class="px-4 py-2 bg-green-900/40 hover:bg-green-900/60 text-green-300 rounded-lg transition-colors text-sm border border-green-800/50"
@@ -235,8 +282,7 @@ export default function Providers(props: { token: string; onLogout: () => void }
                       <div class="font-medium truncate">{p.name}</div>
                       <div class="text-neutral-500 text-xs font-mono mt-0.5">{p.id}</div>
                     </div>
-                    <div class="text-neutral-500 text-xs font-mono truncate max-w-[300px]">{p.endpoint || "—"}</div>
-                    <div class="text-neutral-600 text-xs font-mono">{p.apikey_masked}</div>
+                    <div class="text-neutral-500 text-xs font-mono truncate max-w-[400px]">{configSummary(p.kind, p.config)}</div>
                   </div>
                   <div class="flex items-center space-x-3 flex-shrink-0">
                     <span class="text-neutral-500 text-xs">{new Date(p.update).toLocaleString()}</span>
@@ -263,37 +309,37 @@ export default function Providers(props: { token: string; onLogout: () => void }
                   <span class="text-xs text-neutral-500">— editing</span>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
-                  <input
-                    type="text"
-                    value={editName()}
-                    onInput={(e) => setEditName(e.currentTarget.value)}
-                    placeholder="Name"
-                    class="bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-neutral-500"
-                  />
-                  <select
-                    value={editKind()}
-                    onChange={(e) => setEditKind(e.currentTarget.value)}
-                    class="bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-neutral-500 appearance-none"
-                  >
-                    <For each={[...PROVIDER_KINDS]}>
-                      {(k) => <option value={k}>{k}</option>}
-                    </For>
-                  </select>
+                  <div>
+                    <label class="block text-xs font-medium text-neutral-400 mb-1.5">Name</label>
+                    <input
+                      type="text"
+                      value={editName()}
+                      onInput={(e) => setEditName(e.currentTarget.value)}
+                      placeholder="Name"
+                      class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-neutral-500"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-neutral-400 mb-1.5">Type</label>
+                    <select
+                      value={editKind()}
+                      onChange={(e) => {
+                        setEditKind(e.currentTarget.value);
+                        // Reset config when kind changes during edit
+                        const fields = schemas()[e.currentTarget.value] || [];
+                        const cfg: Record<string, string> = {};
+                        for (const f of fields) cfg[f.key] = "";
+                        setEditConfig(cfg);
+                      }}
+                      class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-neutral-500 appearance-none"
+                    >
+                      <For each={kinds()}>
+                        {(k) => <option value={k}>{k}</option>}
+                      </For>
+                    </select>
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  value={editEndpoint()}
-                  onInput={(e) => setEditEndpoint(e.currentTarget.value)}
-                  placeholder="Endpoint URL"
-                  class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white font-mono text-sm focus:outline-none focus:border-neutral-500"
-                />
-                <input
-                  type="password"
-                  value={editApikey()}
-                  onInput={(e) => setEditApikey(e.currentTarget.value)}
-                  placeholder="New API Key (leave empty to keep current)"
-                  class="w-full bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white font-mono text-sm focus:outline-none focus:border-neutral-500"
-                />
+                <ConfigFields kind={editKind()} config={editConfig()} setConfig={setEditConfig} placeholderOverride />
                 <div class="flex items-center gap-3">
                   <button
                     onClick={handleUpdate}
