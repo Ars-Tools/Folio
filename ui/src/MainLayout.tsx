@@ -141,7 +141,7 @@ export default function MainLayout(props: MainLayoutProps) {
                   <Dashboard />
                 </Match>
                 <Match when={activePage() === "timeline"}>
-                  <Timeline />
+                  <Timeline token={props.token} />
                 </Match>
                 <Match when={activePage() === "sessions"}>
                   <Sessions />
