@@ -116,3 +116,16 @@ CREATE TABLE IF NOT EXISTS equips (
     "update" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (skill, agent)
 );
+
+-- -------------------------------------------------------------------------
+-- posts — timeline entries (agents or humans)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS posts (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender   TEXT NOT NULL,
+    author   TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'user',
+    body     TEXT NOT NULL,
+    update   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS ix_posts_sender ON posts(sender);
