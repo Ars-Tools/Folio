@@ -7,6 +7,7 @@ interface AgentConfig {
   name: string;
   provider: string;
   model: string;
+  profile: string;
   prompt: string;
   avatar: boolean;
   capabilities: string[];
@@ -202,6 +203,7 @@ export default function AgentDetail(props: {
           name: c.name,
           provider: c.provider,
           model: c.model,
+          profile: c.profile,
           prompt: c.prompt,
           capabilities: c.capabilities,
           params: c.params,
@@ -566,6 +568,19 @@ export default function AgentDetail(props: {
                       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-neutral-500 font-mono"
                     />
                   </div>
+                </div>
+
+                {/* Profile */}
+                <div>
+                  <label class="block text-xs font-medium text-neutral-400 mb-1.5">Profile <span class="text-neutral-500 font-normal">Markdown</span></label>
+                  <textarea
+                    value={c().profile}
+                    onInput={(e) => update("profile", e.currentTarget.value)}
+                    rows={10}
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-neutral-500 leading-relaxed resize-y"
+                    spellcheck={false}
+                    placeholder="Who is this agent? Personality, background, tone…"
+                  />
                 </div>
 
                 {/* System Prompt */}
