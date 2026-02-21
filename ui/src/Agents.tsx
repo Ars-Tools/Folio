@@ -101,7 +101,7 @@ export default function Agents(props: {
                 placeholder="my-agent"
                 value={newId()}
                 onInput={(e) => setNewId(e.currentTarget.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                onKeyDown={(e) => { if (!e.isComposing && e.key === "Enter") handleCreate(); }}
                 class="flex-1 bg-neutral-900 border border-neutral-600 rounded-lg px-4 py-2 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500 font-mono text-sm"
               />
               <button
