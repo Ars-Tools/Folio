@@ -3,7 +3,7 @@
 """Build pydantic-ai Agent instances from DB rows."""
 from __future__ import annotations
 
-from pydantic_ai import Agent as PydanticAgent, ConcurrencyLimiter, ConcurrencyLimitedModel
+from pydantic_ai import Agent as PydanticAgent, RunContext, ConcurrencyLimiter, ConcurrencyLimitedModel, FunctionToolset
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
@@ -16,16 +16,26 @@ from pydantic_ai.builtin_tools import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.settings import ModelSettings
-from sqlmodel import Session as DBSession, select
+from sqlmodel import Session as DBSession, select, col
+from typing import Any
 import json
 
 from models.agent import Agent as AgentRow
 from models.provider import Provider
 from models.skill import Skill
 from models.equip import Equip
+from models.journal import Journal
 from models.session import Session
 from core.capabilities import CAPABILITY_MAP, CapKind
+from core.db import engine
+from tools.foundation import foundation_tools
 
 
 # ── Built-in tool factories ────────────────────────────────────────
@@ -46,19 +56,35 @@ _BUILTIN_FACTORIES: dict[str, callable] = {
 
 _CUSTOM_FACTORIES: dict[str, callable] = {
     # "shell":          lambda: ...,
-    # "pyfoundations":  lambda: ...,
+    "pyfoundations":  lambda: __import__("tools.foundation", fromlist=["foundation_tools"]).foundation_tools,
+    "timeline": lambda: __import__("tools.post", fromlist=["post"]).post,
+    "journal":  lambda: __import__("tools.journal", fromlist=["journal_tools"]).journal_tools,
 }
 
 
 def build_model(agent_row: AgentRow, provider_row: Provider) -> Model:
     """Build a pydantic-ai Model from DB rows."""
-    if provider_row.kind == "openai-responses":
-        provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
-        return OpenAIResponsesModel(agent_row.model, provider=provider)
-    if provider_row.kind in ("openai-chat", "openai-completions"):
-        provider = OpenAIProvider(base_url=provider_row.endpoint, api_key=provider_row.apikey)
+    kind = provider_row.kind
+    cfg = json.loads(provider_row.config) if provider_row.config else {}
+
+    if kind in ("openai-chat", "openai-completions"):
+        provider = OpenAIProvider(base_url=cfg.get("base_url", ""), api_key=cfg.get("api_key", ""))
         return OpenAIChatModel(agent_row.model, provider=provider)
-    raise ValueError(f"Unsupported provider kind: {provider_row.kind}")
+    elif kind == "openai-responses":
+        provider = OpenAIProvider(base_url=cfg.get("base_url", ""), api_key=cfg.get("api_key", ""))
+        return OpenAIResponsesModel(agent_row.model, provider=provider)
+    elif kind == "google":
+        kw: dict[str, Any] = {}
+        if cfg.get("api_key"):   kw["api_key"]  = cfg["api_key"]
+        if cfg.get("project"):   kw["project"]  = cfg["project"]
+        if cfg.get("location"):  kw["location"] = cfg["location"]
+        return GoogleModel(agent_row.model, provider=GoogleProvider(**kw))
+    elif kind == "anthropic":
+        return AnthropicModel(agent_row.model, provider=AnthropicProvider(api_key=cfg.get("api_key", "")))
+    elif kind == "xai":
+        return XaiModel(agent_row.model, provider=XaiProvider(api_key=cfg.get("api_key", "")))
+    else:
+        raise ValueError(f"Unsupported provider kind: {kind}")
 
 
 def build_prompt(agent_row: AgentRow, db: DBSession) -> str:
@@ -97,14 +123,17 @@ def _build_settings(agent_row: AgentRow, caps: set[str]) -> ModelSettings | None
     return ms or None
 
 
-def _build_tools(caps: set[str]) -> tuple[list, list]:
+def _build_tools(caps: set[str]) -> tuple[list, list, list]:
     """Instantiate tools for every builtin/custom capability enabled.
     
-    Returns (builtin_tools, custom_tools) — builtin tools go to Agent(builtin_tools=...),
-    custom tools go to Agent(tools=...).
+    Returns (builtin_tools, custom_tools, toolsets):
+      - builtin_tools  → Agent(builtin_tools=...)
+      - custom_tools    → Agent(tools=...)
+      - toolsets         → Agent(toolsets=...)
     """
     builtin: list = []
     custom: list = []
+    toolsets: list = []
     for cap_id in caps:
         cap = CAPABILITY_MAP.get(cap_id)
         if cap is None:
@@ -116,8 +145,14 @@ def _build_tools(caps: set[str]) -> tuple[list, list]:
         elif cap.kind == CapKind.CUSTOM:
             factory = _CUSTOM_FACTORIES.get(cap_id)
             if factory:
-                custom.append(factory())
-    return builtin, custom
+                result = factory()
+                if isinstance(result, FunctionToolset):
+                    toolsets.append(result)
+                elif isinstance(result, list):
+                    custom.extend(result)
+                else:
+                    custom.append(result)
+    return builtin, custom, toolsets
 
 
 def build_agent(agent_row: AgentRow, provider_row: Provider, db: DBSession) -> PydanticAgent:
@@ -136,13 +171,48 @@ def build_agent(agent_row: AgentRow, provider_row: Provider, db: DBSession) -> P
     caps: set[str] = set(json.loads(agent_row.capabilities)) if agent_row.capabilities else set()
 
     settings = _build_settings(agent_row, caps)
-    builtin_tools, custom_tools = _build_tools(caps)
+    builtin_tools, custom_tools, toolsets = _build_tools(caps)
 
-    return PydanticAgent(
+    # Foundation tools are always available to every agent
+    toolsets.append(foundation_tools)
+
+    agent = PydanticAgent(
         model,
         system_prompt=prompt,
         deps_type=Session,
         model_settings=settings,
         builtin_tools=builtin_tools if builtin_tools else [],
         tools=custom_tools if custom_tools else [],
+        toolsets=toolsets,
+        end_strategy='exhaustive',
     )
+
+    # ── Dynamic journal prompt ─────────────────────────────────────
+    # If the agent has the "journal" capability, register a dynamic
+    # system-prompt function that loads the latest journal entry from
+    # the DB on every run, giving the agent persistent inner state.
+    if "journal" in caps:
+        _agent_id = agent_row.id  # capture for closure
+
+        @agent.system_prompt
+        def _inject_journal(ctx: RunContext[Session]) -> str:  # noqa: ARG001
+            with DBSession(engine) as _db:
+                entry = _db.exec(
+                    select(Journal)
+                    .where(Journal.agent == _agent_id)
+                    .order_by(col(Journal.id).desc())
+                    .limit(1)
+                ).first()
+            if not entry:
+                return ""
+            ts = entry.timestamp.strftime("%Y-%m-%d %H:%M UTC")
+            header = f"## Journal ({ts})"
+            if entry.abstract:
+                header += f" — {entry.abstract}"
+            lines = [header]
+            if entry.episode:
+                lines.append(f"> Episode: {entry.episode}")
+            lines.append(entry.body)
+            return "\n".join(lines)
+
+    return agent
