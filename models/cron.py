@@ -14,7 +14,8 @@ class Cron(SQLModel, table=True):
     agent: str = Field(
         sa_column=sa.Column(sa.String, sa.ForeignKey("agents.id", ondelete="CASCADE"), nullable=False),
     )
-    pattern: str
+    name: str = Field(default="")
+    schedule: str                       # JSON: {"cron":"..."} and/or {"at":["...",...]}
     message: str
-    execute: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    fired: Optional[str] = Field(default=None)   # ISO8601 UTC — last fire time
     update: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

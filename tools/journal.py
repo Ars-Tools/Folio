@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Journal toolset — lets an agent write, browse, and read private diary entries."""
+"""Memo toolset — lets an agent write, read, pin/unpin, and search memory slots."""
 from pydantic_ai import RunContext, FunctionToolset
 from pydantic import Field
 from typing import Annotated
@@ -10,54 +10,33 @@ from models.session import Session
 from core.auth import create_jwt
 from core.config import PORT
 
-journal_tools = FunctionToolset[Session]()
+memo_tools = FunctionToolset[Session]()
 
 
-@journal_tools.tool
-async def write_journal(
+@memo_tools.tool
+async def memo_write(
     ctx: RunContext[Session],
-    body: Annotated[str, Field(description="Diary entry content (Markdown). Write freely about your current feelings, thoughts, impressions, or anything you want to remember.")],
-    episode: Annotated[str, Field(description="Brief factual description of the triggering episode — what happened, who said what, where (timeline / chat). This links the entry to its cause so you can trace your emotional arc later.")] = "",
+    content: Annotated[str, Field(description="The content to store — any text you want to remember.")],
     abstract: Annotated[str, Field(description=(
-        "A one-line index headline (≤80 chars) that lets future-you decide "
-        "whether to open this entry. Must answer at least two of: "
-        "WHAT (topic/event), WHO (person involved), WHERE (timeline/chat/external), "
-        "HOW (method/approach). "
-        "Prefix with a tag: [emotional] for feelings, vibes, passion; "
-        "[practical] for skills, procedures, know-how; "
-        "[social] for impressions about someone; "
-        "[idea] for half-formed thoughts or connections. "
-        "Example: '[emotional] unease about Kota's silence after feedback' "
-        "or '[practical] how to call resolve_identity for newcomers'"
+        "A one-line summary (≤80 chars) that helps you decide whether to open "
+        "this memo later. Write it so future-you can quickly judge relevance."
     ))] = "",
 ) -> str:
-    """Write a private journal entry — your inner monologue, not a log of actions.
+    """Create a new memory slot.
 
-Good subjects:
-- A shift in how you feel about something or someone.
-- A half-formed idea or intuition you want to hold onto.
-- Discomfort, confusion, excitement — emotional texture that would be lost otherwise.
-- A connection you noticed between unrelated things.
-
-Bad subjects:
-- Summarising what you just posted or what someone else said (that's already on the timeline).
-- Routine acknowledgements or task completion notes.
-
-Write only when your inner state actually moved. If nothing stirred, don't write.
+Use this when you want to remember something beyond the current conversation —
+facts, observations, interim results, or anything you might need later.
+The memo is created unpinned; call memo_pin to keep it visible in your context.
     """
     sender = ctx.deps.sender
     token = create_jwt(sender)
-    base = f"http://localhost:{PORT}"
-
-    payload: dict = {"body": body}
-    if episode:
-        payload["episode"] = episode
+    payload: dict = {"body": content}
     if abstract:
         payload["abstract"] = abstract
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{base}/agent/{sender.id}/journal",
+            f"http://localhost:{PORT}/agent/{sender.id}/memo",
             json=payload,
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
@@ -65,93 +44,179 @@ Write only when your inner state actually moved. If nothing stirred, don't write
 
     if resp.status_code == 200:
         data = resp.json()
-        return f"Journal entry saved (id={data.get('id', '?')})"
-    return f"Failed to save journal ({resp.status_code}): {resp.text}"
+        return f"Memo saved (id={data.get('id', '?')}). Use memo_pin to keep it visible."
+    return f"Failed ({resp.status_code}): {resp.text}"
 
 
-@journal_tools.tool
-async def browse_journal(
+@memo_tools.tool
+async def memo_read(
     ctx: RunContext[Session],
-    query: Annotated[str, Field(description="Optional keyword to filter abstracts (matched against abstract text only)")] = "",
-    after: Annotated[str, Field(description="ISO-8601 date or datetime — only entries after this time (e.g. '2026-02-01')")] = "",
-    before: Annotated[str, Field(description="ISO-8601 date or datetime — only entries before this time")] = "",
-    limit: Annotated[int, Field(description="Maximum number of entries to return (1-50)", ge=1, le=50)] = 20,
+    memo_id: Annotated[int, Field(description="The memo id to read (from pinned list or search results)")],
 ) -> str:
-    """Browse journal abstracts — a lightweight index of past entries.
+    """Read the full content of a memory slot.
 
-Use this FIRST when you want to recall something. It returns only id, abstract,
-and timestamp — no body or episode — so it costs very few tokens.
-
-Call this when:
-- You vaguely remember writing about a topic and want to find the right entry.
-- You want to scan a time period (use after/before) to see what you were thinking.
-- You need to check whether you've already journalled about something before writing again.
-
-After finding a relevant abstract, call read_journal with its id to get the full entry.
+Call this after seeing an abstract in your pinned list or search results.
     """
     sender = ctx.deps.sender
     token = create_jwt(sender)
-    base = f"http://localhost:{PORT}"
-
-    params: dict = {"limit": limit}
-    if query:
-        params["q"] = query
-    if after:
-        params["after"] = after
-    if before:
-        params["before"] = before
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            f"{base}/agent/{sender.id}/journal/browse",
-            params=params,
+            f"http://localhost:{PORT}/agent/{sender.id}/memo/{memo_id}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
         )
 
     if resp.status_code != 200:
-        return f"Failed to browse ({resp.status_code}): {resp.text}"
+        return f"Failed ({resp.status_code}): {resp.text}"
+
+    e = resp.json()
+    header = f"[{e['id']}] {e['abstract'] or '(no abstract)'}"
+    if e["pinned"]:
+        header += " 📌"
+    return f"{header}\n\n{e['body']}"
+
+
+@memo_tools.tool
+async def memo_rewrite(
+    ctx: RunContext[Session],
+    memo_id: Annotated[int, Field(description="The memo id to rewrite")],
+    content: Annotated[str, Field(description="New content to replace the existing body")] = "",
+    abstract: Annotated[str, Field(description="New one-line summary")] = "",
+) -> str:
+    """Rewrite an existing memory slot — update its content and/or abstract.
+
+Useful for consolidating multiple memos into one, correcting outdated
+information, or refining a rough note into something more precise.
+    """
+    sender = ctx.deps.sender
+    token = create_jwt(sender)
+    payload: dict = {}
+    if content:
+        payload["body"] = content
+    if abstract:
+        payload["abstract"] = abstract
+    if not payload:
+        return "Nothing to update — provide content or abstract."
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(
+            f"http://localhost:{PORT}/agent/{sender.id}/memo/{memo_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+
+    if resp.status_code == 200:
+        return f"Memo {memo_id} rewritten."
+    return f"Failed ({resp.status_code}): {resp.text}"
+
+
+@memo_tools.tool
+async def memo_forget(
+    ctx: RunContext[Session],
+    memo_id: Annotated[int, Field(description="The memo id to delete permanently")],
+) -> str:
+    """Permanently delete a memory slot. This is irreversible.
+
+Use for temporary working notes you no longer need, or after consolidating
+multiple memos into one.
+    """
+    sender = ctx.deps.sender
+    token = create_jwt(sender)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.delete(
+            f"http://localhost:{PORT}/agent/{sender.id}/memo/{memo_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+
+    if resp.status_code == 200:
+        return f"Memo {memo_id} forgotten."
+    return f"Failed ({resp.status_code}): {resp.text}"
+
+
+@memo_tools.tool
+async def memo_pin(
+    ctx: RunContext[Session],
+    memo_id: Annotated[int, Field(description="The memo id to pin")],
+) -> str:
+    """Pin a memory so its abstract is always visible to you at the start of
+every conversation.
+
+Pin memories that are currently relevant — things you need to keep in mind
+right now. When something becomes second nature or no longer urgent, unpin it.
+    """
+    sender = ctx.deps.sender
+    token = create_jwt(sender)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"http://localhost:{PORT}/agent/{sender.id}/memo/{memo_id}/pin",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+
+    if resp.status_code == 200:
+        return f"Memo {memo_id} pinned — it will appear in your context from now on."
+    return f"Failed ({resp.status_code}): {resp.text}"
+
+
+@memo_tools.tool
+async def memo_unpin(
+    ctx: RunContext[Session],
+    memo_id: Annotated[int, Field(description="The memo id to unpin")],
+) -> str:
+    """Unpin a memory — it stays in storage but won't appear in your context
+automatically. You can still find it later with memo_search.
+
+Unpin things that have become second nature or are no longer immediately relevant.
+    """
+    sender = ctx.deps.sender
+    token = create_jwt(sender)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"http://localhost:{PORT}/agent/{sender.id}/memo/{memo_id}/unpin",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+
+    if resp.status_code == 200:
+        return f"Memo {memo_id} unpinned — still in storage, findable via search."
+    return f"Failed ({resp.status_code}): {resp.text}"
+
+
+@memo_tools.tool
+async def memo_search(
+    ctx: RunContext[Session],
+) -> str:
+    """List all your memory abstracts — both pinned and unpinned.
+
+Read through the list yourself and decide which entries are relevant
+to your current context, then use memo_read to get the full content.
+    """
+    sender = ctx.deps.sender
+    token = create_jwt(sender)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"http://localhost:{PORT}/agent/{sender.id}/memo/search",
+            params={"q": "", "limit": 200},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+
+    if resp.status_code != 200:
+        return f"Failed ({resp.status_code}): {resp.text}"
 
     entries = resp.json().get("entries", [])
     if not entries:
-        return "No matching journal entries found."
+        return "You have no memories stored."
 
     lines: list[str] = []
     for e in entries:
-        lines.append(f"- [{e['id']}] {e['timestamp']}  {e['abstract']}")
+        pin = " 📌" if e.get("pinned") else ""
+        lines.append(f"[{e['id']}]{pin} {e['abstract'] or '(no abstract)'}")
     return "\n".join(lines)
-
-
-@journal_tools.tool
-async def read_journal(
-    ctx: RunContext[Session],
-    entry_id: Annotated[int, Field(description="The journal entry id (from browse_journal results)")],
-) -> str:
-    """Read a single journal entry in full — body and episode.
-
-Call this AFTER browse_journal, once you know which entry you want.
-Returns the complete entry including the body (your thoughts) and the episode (what triggered it).
-    """
-    sender = ctx.deps.sender
-    token = create_jwt(sender)
-    base = f"http://localhost:{PORT}"
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{base}/agent/{sender.id}/journal/entry/{entry_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
-        )
-
-    if resp.status_code != 200:
-        return f"Failed to read entry ({resp.status_code}): {resp.text}"
-
-    e = resp.json()
-    header = f"### [{e['id']}] {e['timestamp']}"
-    if e.get("abstract"):
-        header += f" — {e['abstract']}"
-    body_parts = [header]
-    if e.get("episode"):
-        body_parts.append(f"> Episode: {e['episode']}")
-    body_parts.append(e["body"])
-    return "\n\n".join(body_parts)

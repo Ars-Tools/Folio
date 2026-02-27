@@ -43,6 +43,20 @@ export default function AgentDetail(props: {
   const [allSkills, setAllSkills] = createSignal<{ id: string }[]>([]);
   const [approvals, setApprovals] = createSignal<{ id: number; request: string; status: string; update: string }[]>([]);
 
+  // Cron state
+  interface CronInfo { id: number; name: string; schedule: { cron?: string; at?: string[] }; message: string; fired: string | null; update: string | null }
+  const [crons, setCrons] = createSignal<CronInfo[]>([]);
+  const [cronName, setCronName] = createSignal("");
+  const [cronType, setCronType] = createSignal<"cron" | "at">("cron");
+  const [cronExpr, setCronExpr] = createSignal("");
+  const [cronAt, setCronAt] = createSignal("");
+  const [cronMsg, setCronMsg] = createSignal("");
+
+  // Memo state
+  interface MemoInfo { id: number; abstract: string; body: string; pinned: boolean; timestamp: string; update: string }
+  const [memos, setMemos] = createSignal<MemoInfo[]>([]);
+  const [expandedMemo, setExpandedMemo] = createSignal<number | null>(null);
+
   // Chat state
   const [chatOpen, setChatOpen] = createSignal(false);
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
@@ -167,6 +181,69 @@ export default function AgentDetail(props: {
     if (res.ok) fetchApprovals();
   };
 
+  const fetchCrons = async () => {
+    try {
+      const res = await fetch(`/agent/${props.agentId}/crons`, { headers: headers() });
+      if (res.ok) {
+        const data = await res.json();
+        setCrons(data.crons || []);
+      }
+    } catch {}
+  };
+
+  const createCron = async () => {
+    const schedule: Record<string, unknown> = {};
+    if (cronType() === "cron" && cronExpr().trim()) {
+      schedule.cron = cronExpr().trim();
+    }
+    if (cronType() === "at" && cronAt().trim()) {
+      schedule.at = cronAt().split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    if (!schedule.cron && !schedule.at) return;
+    if (!cronMsg().trim()) return;
+    const res = await fetch(`/agent/${props.agentId}/crons`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: cronName().trim(), schedule, message: cronMsg().trim() }),
+    });
+    if (res.ok) {
+      setCronName(""); setCronExpr(""); setCronAt(""); setCronMsg("");
+      fetchCrons();
+    }
+  };
+
+  const deleteCron = async (id: number) => {
+    const res = await fetch(`/cron/${id}`, { method: "DELETE", headers: headers() });
+    if (res.ok) fetchCrons();
+  };
+
+  const fetchMemos = async () => {
+    try {
+      const res = await fetch(`/agent/${props.agentId}/memo?limit=200`, { headers: headers() });
+      if (res.ok) {
+        const data = await res.json();
+        setMemos(data.entries || []);
+      }
+    } catch {}
+  };
+
+  const togglePin = async (id: number, current: boolean) => {
+    const action = current ? "unpin" : "pin";
+    const res = await fetch(`/agent/${props.agentId}/memo/${id}/${action}`, {
+      method: "PATCH",
+      headers: headers(),
+    });
+    if (res.ok) fetchMemos();
+  };
+
+  const deleteMemo = async (id: number) => {
+    const res = await fetch(`/agent/${props.agentId}/memo/${id}`, { method: "DELETE", headers: headers() });
+    if (res.ok) {
+      setExpandedMemo(null);
+      fetchMemos();
+    }
+  };
+
   createEffect(() => {
     fetchConfig().then(() => {
       const c = config();
@@ -177,6 +254,8 @@ export default function AgentDetail(props: {
     fetchAllSkills();
     fetchEquippedSkills();
     fetchApprovals();
+    fetchCrons();
+    fetchMemos();
   });
 
   // -----------------------------------------------------------------------
@@ -819,6 +898,167 @@ export default function AgentDetail(props: {
                       </For>
                     </div>
                   </Show>
+                </div>
+
+                {/* Memories (memo system) */}
+                <div>
+                  <label class="block text-xs font-medium text-neutral-400 mb-1.5">Memories</label>
+                  <Show when={memos().length > 0} fallback={
+                    <p class="text-sm text-neutral-600">No memories</p>
+                  }>
+                    <div class="space-y-1.5 mb-2">
+                      <For each={[...memos()].sort((a, b) => {
+                        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+                        return b.id - a.id;
+                      })}>
+                        {(m) => (
+                          <div class={`rounded-lg border transition-colors ${
+                            m.pinned
+                              ? "bg-neutral-800 border-amber-800/40"
+                              : "bg-neutral-800/60 border-neutral-700/50"
+                          }`}>
+                            <div class="flex items-center gap-2 px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => togglePin(m.id, m.pinned)}
+                                class={`text-sm shrink-0 transition-colors ${
+                                  m.pinned ? "text-amber-400 hover:text-amber-300" : "text-neutral-600 hover:text-amber-400"
+                                }`}
+                                title={m.pinned ? "Unpin" : "Pin"}
+                              >
+                                {m.pinned ? "\uD83D\uDCCC" : "\u25CB"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedMemo(expandedMemo() === m.id ? null : m.id)}
+                                class="flex-1 text-left text-sm text-neutral-200 truncate hover:text-white transition-colors"
+                                title={m.abstract || "(no abstract)"}
+                              >
+                                <span class="text-neutral-500 text-xs font-mono mr-1.5">[{m.id}]</span>
+                                {m.abstract || <span class="text-neutral-500 italic">no abstract</span>}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteMemo(m.id)}
+                                class="text-neutral-600 hover:text-red-400 text-xs transition-colors shrink-0 px-1"
+                                title="Forget"
+                              >&times;</button>
+                            </div>
+                            <Show when={expandedMemo() === m.id}>
+                              <div class="px-3 pb-2.5 pt-0.5 border-t border-neutral-700/50">
+                                <pre class="text-xs text-neutral-300 whitespace-pre-wrap font-mono leading-relaxed max-h-40 overflow-y-auto">{m.body}</pre>
+                                <div class="text-[10px] text-neutral-600 mt-1.5">{m.timestamp}</div>
+                              </div>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                    <div class="text-[10px] text-neutral-600">
+                      {memos().filter(m => m.pinned).length} pinned · {memos().filter(m => !m.pinned).length} unpinned
+                    </div>
+                  </Show>
+                </div>
+
+                {/* Scheduled Tasks (crons) */}
+                <div>
+                  <label class="block text-xs font-medium text-neutral-400 mb-1.5">Scheduled Tasks</label>
+                  <Show when={crons().length > 0} fallback={
+                    <p class="text-sm text-neutral-600">No scheduled tasks</p>
+                  }>
+                    <div class="space-y-2 mb-3">
+                      <For each={crons()}>
+                        {(cr) => {
+                          const sched = () => cr.schedule;
+                          const badge = () => {
+                            const parts: string[] = [];
+                            if (sched().cron) parts.push(`cron: ${sched().cron}`);
+                            if (sched().at?.length) parts.push(`at: ${sched().at!.length} time${sched().at!.length > 1 ? "s" : ""}`);
+                            return parts.join(" + ");
+                          };
+                          return (
+                            <div class="flex items-start gap-3 px-3 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700">
+                              <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2 mb-1">
+                                  <Show when={cr.name}>
+                                    <span class="text-sm font-medium text-white">{cr.name}</span>
+                                  </Show>
+                                  <span class="text-[11px] font-mono text-neutral-400 bg-neutral-900 px-1.5 py-0.5 rounded">{badge()}</span>
+                                </div>
+                                <div class="text-xs text-neutral-300 font-mono truncate" title={cr.message}>{cr.message}</div>
+                                <Show when={cr.fired}>
+                                  <div class="text-[10px] text-neutral-600 mt-0.5">Last fired: {cr.fired}</div>
+                                </Show>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => deleteCron(cr.id)}
+                                class="px-2 py-1 text-xs rounded bg-neutral-900 text-neutral-400 border border-neutral-700 hover:text-red-400 hover:border-red-800 transition-colors shrink-0"
+                              >Delete</button>
+                            </div>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </Show>
+
+                  {/* Create cron form */}
+                  <div class="p-3 rounded-lg bg-neutral-900 border border-neutral-800 space-y-2">
+                    <div class="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={cronName()}
+                        onInput={(e) => setCronName(e.currentTarget.value)}
+                        placeholder="Name (optional)"
+                        class="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500"
+                      />
+                      <select
+                        value={cronType()}
+                        onChange={(e) => setCronType(e.currentTarget.value as "cron" | "at")}
+                        class="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500 appearance-none"
+                      >
+                        <option value="cron">Cron expression</option>
+                        <option value="at">Specific times</option>
+                      </select>
+                    </div>
+                    <Show when={cronType() === "cron"}>
+                      <input
+                        type="text"
+                        value={cronExpr()}
+                        onInput={(e) => setCronExpr(e.currentTarget.value)}
+                        placeholder="0 9 * * *  (every day at 09:00 UTC)"
+                        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500 font-mono"
+                      />
+                    </Show>
+                    <Show when={cronType() === "at"}>
+                      <input
+                        type="text"
+                        value={cronAt()}
+                        onInput={(e) => setCronAt(e.currentTarget.value)}
+                        placeholder="2026-03-01T09:00:00Z, 2026-04-01T09:00:00Z"
+                        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500 font-mono"
+                      />
+                    </Show>
+                    <textarea
+                      value={cronMsg()}
+                      onInput={(e) => setCronMsg(e.currentTarget.value)}
+                      placeholder="Message to send to agent…"
+                      rows={2}
+                      class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-neutral-500 resize-y"
+                    />
+                    <button
+                      type="button"
+                      onClick={createCron}
+                      disabled={!cronMsg().trim() || (cronType() === "cron" ? !cronExpr().trim() : !cronAt().trim())}
+                      class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                        cronMsg().trim() && (cronType() === "cron" ? cronExpr().trim() : cronAt().trim())
+                          ? "bg-neutral-200 hover:bg-white text-neutral-900"
+                          : "bg-neutral-800 text-neutral-600 cursor-not-allowed border border-neutral-700"
+                      }`}
+                    >
+                      Add Schedule
+                    </button>
+                  </div>
                 </div>
 
               </div>

@@ -7,10 +7,12 @@ from api.auth import router as auths_router
 from api.approvals import router as approvals_router
 from api.providers import router as providers_router
 from api.skills import router as skills_router
-from api.journal import router as journal_router
+from api.journal import router as memo_router
 from api.timeline import router as timeline_router
 from api.tokens import router as tokens_router
 from api.identity import router as identity_router
+from api.crons import router as crons_router
+from core.scheduler import start_scheduler, stop_scheduler
 from core.db import init_db, engine
 from models.provider import Provider
 from models.token import Token, TokenKind
@@ -56,8 +58,9 @@ async def lifespan(app: FastAPI):
     init_db()
     _seed_db()
     load_agents()
+    start_scheduler()
     yield
-    # cleanup
+    stop_scheduler()
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(auths_router)
@@ -65,10 +68,11 @@ app.include_router(agents_router)
 app.include_router(approvals_router)
 app.include_router(providers_router)
 app.include_router(skills_router)
-app.include_router(journal_router)
+app.include_router(memo_router)
 app.include_router(timeline_router)
 app.include_router(tokens_router)
 app.include_router(identity_router)
+app.include_router(crons_router)
 
 # Mount frontend if built
 if os.path.exists("ui/dist"):
@@ -79,7 +83,7 @@ if os.path.exists("ui/dist"):
         # API routes are already handled above.
         # If the path is not an API route and not an asset, serve index.html
         # Note: Ideally API routes should be under /api scope to easier distinction
-        if full_path.startswith(("api", "agent", "auth", "approval", "journal", "provider", "skill", "timeline", "token", "capabilit", "identit")):
+        if full_path.startswith(("api", "agent", "auth", "approval", "cron", "memo", "provider", "skill", "timeline", "token", "capabilit", "identit")):
              # Use default 404 behavior? The route matched here, so we need to return 404 manually or let it fall through?
              # Depends on if we rely on FastAPI's default 404. 
              # Since this catch-all matches everything, standard 404 won't trigger for non-matched paths.

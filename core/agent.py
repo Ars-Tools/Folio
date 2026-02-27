@@ -56,9 +56,11 @@ _BUILTIN_FACTORIES: dict[str, callable] = {
 
 _CUSTOM_FACTORIES: dict[str, callable] = {
     # "shell":          lambda: ...,
-    "pyfoundations":  lambda: __import__("tools.foundation", fromlist=["foundation_tools"]).foundation_tools,
+    # NOTE: "pyfoundations" is intentionally absent — foundation_tools
+    # is unconditionally appended to every agent in build_agent().
     "timeline": lambda: __import__("tools.post", fromlist=["post"]).post,
-    "journal":  lambda: __import__("tools.journal", fromlist=["journal_tools"]).journal_tools,
+    "memo":     lambda: __import__("tools.journal", fromlist=["memo_tools"]).memo_tools,
+    "cron":     lambda: __import__("tools.cron", fromlist=["cron_tools"]).cron_tools,
 }
 
 
@@ -187,32 +189,35 @@ def build_agent(agent_row: AgentRow, provider_row: Provider, db: DBSession) -> P
         end_strategy='exhaustive',
     )
 
-    # ── Dynamic journal prompt ─────────────────────────────────────
-    # If the agent has the "journal" capability, register a dynamic
-    # system-prompt function that loads the latest journal entry from
-    # the DB on every run, giving the agent persistent inner state.
-    if "journal" in caps:
+    # ── Dynamic memo prompt ───────────────────────────────────────
+    # If the agent has the "memo" capability, inject pinned memo
+    # abstracts into the system prompt on every run. The agent sees
+    # *what* it has remembered (abstracts) and can memo_read to get
+    # full content. Unpinned memos are reachable via memo_search.
+    if "memo" in caps:
         _agent_id = agent_row.id  # capture for closure
 
         @agent.system_prompt
-        def _inject_journal(ctx: RunContext[Session]) -> str:  # noqa: ARG001
+        def _inject_pinned_memos(ctx: RunContext[Session]) -> str:  # noqa: ARG001
             with DBSession(engine) as _db:
-                entry = _db.exec(
+                pinned = _db.exec(
                     select(Journal)
-                    .where(Journal.agent == _agent_id)
+                    .where(Journal.agent == _agent_id, Journal.pinned == True)
                     .order_by(col(Journal.id).desc())
-                    .limit(1)
-                ).first()
-            if not entry:
+                ).all()
+                total_ids = _db.exec(
+                    select(Journal.id).where(Journal.agent == _agent_id)
+                ).all()
+            unpinned_count = len(total_ids) - len(pinned)
+            if not pinned and unpinned_count == 0:
                 return ""
-            ts = entry.timestamp.strftime("%Y-%m-%d %H:%M UTC")
-            header = f"## Journal ({ts})"
-            if entry.abstract:
-                header += f" — {entry.abstract}"
-            lines = [header]
-            if entry.episode:
-                lines.append(f"> Episode: {entry.episode}")
-            lines.append(entry.body)
+            lines: list[str] = []
+            if pinned:
+                lines.append("📌 Pinned memories:")
+                for p in pinned:
+                    lines.append(f" [{p.id}] {p.abstract or '(no abstract)'}")
+            if unpinned_count > 0:
+                lines.append(f"\n🗄️ {unpinned_count} other memories available (use memo_search to find them)")
             return "\n".join(lines)
 
     return agent

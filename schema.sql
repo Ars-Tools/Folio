@@ -80,20 +80,22 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE TABLE IF NOT EXISTS crons (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     agent    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    pattern  TEXT NOT NULL,
+    name     TEXT NOT NULL DEFAULT '',
+    schedule TEXT NOT NULL,
     message  TEXT NOT NULL,
-    execute  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    fired    TEXT,
     "update" TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 -- -------------------------------------------------------------------------
--- journals — agent diary / log entries
+-- journals — agent memory slots (memo system with pin support)
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS journals (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     agent     TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     abstract  TEXT,
     body      TEXT NOT NULL,
+    pinned    INTEGER NOT NULL DEFAULT 0,
     timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     "update"  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

@@ -48,8 +48,8 @@ CAPABILITIES: list[Capability] = [
     # ── Folio Custom Tools ────────────────────────────────────────────
     Capability("shell",            "Shell",            "Execute shell commands",                   CapKind.CUSTOM),
     Capability("timeline",         "Timeline",         "Read and write timeline entries",          CapKind.CUSTOM),
-    Capability("journal",          "Journal",          "Keep a private diary to persist inner state across contexts", CapKind.CUSTOM),
-    Capability("pyfoundations",    "PyFoundations",    "Folio Python foundation tools",            CapKind.CUSTOM),
+    Capability("memo",             "Memo",             "Persistent memory with pin/unpin for autonomous recall", CapKind.CUSTOM),
+    Capability("cron",             "Cron",             "Self-register scheduled tasks to be prompted at specific times", CapKind.CUSTOM),
 ]
 # fmt: on
 
